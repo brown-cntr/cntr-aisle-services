@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     #redis_url: str = "redis://localhost:6379"
     
     # LegiScan
-    #legiscan_api_key: str
+    legiscan_api_key: str
     
     # Environment
     environment: str = "development"

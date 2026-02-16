@@ -22,6 +22,9 @@ class Bill(BaseModel):
     summary: Optional[str] = None
     url: Optional[str] = None
     legiscan_url: Optional[str] = None
+    legiscan_id: Optional[int] = None
+    openstates_id: Optional[str] = None
+    openstates_url: Optional[str] = None
     version_date: Optional[date] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

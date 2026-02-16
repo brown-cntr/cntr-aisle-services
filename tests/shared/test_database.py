@@ -8,4 +8,4 @@ def test_supabase_connection():
 
 if __name__ == "__main__":
     test_supabase_connection()
-    print("✓ Test passed!")
+    print("Test passed!")
