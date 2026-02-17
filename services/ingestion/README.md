@@ -156,4 +156,4 @@ LegiScan → Supabase Schema:
 - `bill_id` → `legiscan_id`
 
 ## Credit
-Much of the filtering logic and LegiScan API knowledge comes from (Timothy Fong)[https://github.com/Timfon]
+Much of the filtering query and LegiScan API knowledge provided by [Timothy Fong](https://github.com/Timfon)
