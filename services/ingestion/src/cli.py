@@ -76,9 +76,12 @@ def main():
         except ValueError:
             since_date = datetime.fromisoformat(since_str).date()
 
-    # Setup logging
+    # Setup logging 
+    from shared.utils.config import get_settings
+    settings = get_settings()
+    log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
     logging.basicConfig(
-        level=logging.INFO,
+        level=log_level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 

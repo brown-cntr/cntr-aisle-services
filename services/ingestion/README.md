@@ -154,3 +154,6 @@ LegiScan → Supabase Schema:
 - `state_link` or `url` → `url`; LegiScan `url` → `legiscan_url`
 - `status_date` (or first history date) → `version_date`
 - `bill_id` → `legiscan_id`
+
+## Credit
+Much of the filtering logic and LegiScan API knowledge comes from (Timothy Fong)[https://github.com/Timfon]
