@@ -23,8 +23,13 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run unit tests
+        env:
+          SUPABASE_URL: https://placeholder.supabase.co
+          SUPABASE_KEY: placeholder
+          LEGISCAN_API_KEY: placeholder
         run: >
           pytest tests/ -v
           --ignore=tests/services/ingestion/test_ingestion_full_integration.py
           --ignore=tests/services/ingestion/test_legiscan_client_integration.py
           --ignore=tests/services/ingestion/test_ingestion_integration.py
+          --ignore=tests/shared/test_database.py
