@@ -3,13 +3,28 @@ Parse LegiScan API bill data into our Bill model.
 """
 import re
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from datetime import datetime
 from shared.models.bill import Bill, BillBody
 
-logger = logging.getLogger(__name__)
+_STATUS_MAP = {
+    1: "Introduced",
+    2: "Engrossed",
+    3: "Enrolled",
+    4: "Passed",
+    5: "Vetoed",
+    6: "Failed",
+}
 
+def _parse_bill_status(raw_status) -> Optional[str]:
+    if isinstance(raw_status, str) and raw_status:
+        return raw_status
+    if isinstance(raw_status, int):
+        return _STATUS_MAP.get(raw_status)
+    return None
+
+logger = logging.getLogger(__name__)
 
 def parse_bill_data(legiscan_bill: Dict[str, Any]) -> Bill:
     """
@@ -66,6 +81,8 @@ def parse_bill_data(legiscan_bill: Dict[str, Any]) -> Bill:
     )
     url = legiscan_bill.get("state_link") or legiscan_url
 
+    bill_status = _parse_bill_status(legiscan_bill.get("status"))
+
     bill_number_raw = legiscan_bill.get("bill_number", "")
     version_date_str = version_date.isoformat() if version_date else ""
 
@@ -91,6 +108,7 @@ def parse_bill_data(legiscan_bill: Dict[str, Any]) -> Bill:
         legiscan_url=legiscan_url,
         legiscan_id=bill_id,
         version_date=version_date,
+        bill_status=bill_status,
     )
 
 def _map_chamber_to_body(chamber: str, bill_number: str) -> BillBody:

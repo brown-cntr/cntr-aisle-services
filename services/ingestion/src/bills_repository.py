@@ -172,23 +172,31 @@ class BillsRepository:
     def _handle_existing_bill(
         self, existing_bill: dict, bill: Bill, now: str
     ) -> None:
-        """Backfill legiscan_id on existing row if missing."""
-        existing_legiscan_id = existing_bill.get("legiscan_id")
-        if existing_legiscan_id is not None or bill.legiscan_id is None:
+        """Backfill legiscan_id and update bill_status on existing row."""
+        updates = {}
+
+        if existing_bill.get("legiscan_id") is None and bill.legiscan_id is not None:
+            updates["legiscan_id"] = bill.legiscan_id
+            if bill.legiscan_url:
+                updates["legiscan_url"] = bill.legiscan_url
+
+        if bill.bill_status is not None:
+            updates["bill_status"] = bill.bill_status
+
+        if not updates:
             return
-        backfill = {"legiscan_id": bill.legiscan_id, "updated_at": now}
-        if bill.legiscan_url:
-            backfill["legiscan_url"] = bill.legiscan_url
+
+        updates["updated_at"] = now
         try:
-            self.supabase.table("bills").update(backfill).eq(
+            self.supabase.table("bills").update(updates).eq(
                 "id", existing_bill["id"]
             ).execute()
             logger.debug(
-                f"Backfilled legiscan_id for {bill.external_id} (was missing)"
+                f"Updated existing bill {bill.external_id}: {list(updates.keys())}"
             )
         except Exception as e:
             logger.warning(
-                f"Could not backfill legiscan_id for {bill.external_id}: {e}"
+                f"Could not update existing bill {bill.external_id}: {e}"
             )
 
     @staticmethod
