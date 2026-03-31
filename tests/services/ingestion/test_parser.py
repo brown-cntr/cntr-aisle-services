@@ -4,7 +4,7 @@ from datetime import datetime, date
 import pytest
 from unittest.mock import patch
 
-from services.ingestion.src.parser import parse_bill_data, _map_chamber_to_body
+from services.ingestion.src.parser import parse_bill_data, _map_chamber_to_body, _parse_bill_status
 from shared.models.bill import Bill, BillBody
 
 
@@ -22,6 +22,7 @@ def sample_bill_data():
         "status_date": "2024-01-15",
         "url": "https://legiscan.com/CA/bill/123456",
         "session": {"session_id": 2024, "session_title": "2024 Regular Session"},
+        "status": 1,
         "history": [{"date": "2024-01-15", "action": "Introduced"}],
     }
 
@@ -40,6 +41,7 @@ class TestParseBillData:
         assert bill.body == BillBody.ASSEMBLY
         assert bill.version_date == date(2024, 1, 15)
         assert "legiscan.com/CA/bill/123456" in (bill.legiscan_url or "")
+        assert bill.bill_status == "Introduced"
 
     def test_minimal(self):
         data = {
@@ -100,6 +102,55 @@ class TestParseBillData:
         }
         bill = parse_bill_data(data)
         assert bill.version_date is None
+
+
+class TestParseBillStatus:
+    """Tests for _parse_bill_status."""
+
+    def test_integer_status(self):
+        assert _parse_bill_status(1) == "Introduced"
+        assert _parse_bill_status(2) == "Engrossed"
+        assert _parse_bill_status(3) == "Enrolled"
+        assert _parse_bill_status(4) == "Passed"
+        assert _parse_bill_status(5) == "Vetoed"
+        assert _parse_bill_status(6) == "Failed"
+
+    def test_string_status_passthrough(self):
+        assert _parse_bill_status("Passed") == "Passed"
+        assert _parse_bill_status("Introduced") == "Introduced"
+
+    def test_missing_status(self):
+        assert _parse_bill_status(None) is None
+
+    def test_unknown_integer(self):
+        assert _parse_bill_status(99) is None
+
+    def test_empty_string(self):
+        assert _parse_bill_status("") is None
+
+    def test_bill_status_from_parse(self):
+        data = {
+            "bill_id": 123456,
+            "title": "Test Bill",
+            "state": "CA",
+            "bill_number": "AB123",
+            "year": 2024,
+            "status": 4,
+            "status_date": "2024-03-01",
+        }
+        bill = parse_bill_data(data)
+        assert bill.bill_status == "Passed"
+
+    def test_bill_status_missing(self):
+        data = {
+            "bill_id": 123456,
+            "title": "Test Bill",
+            "state": "CA",
+            "bill_number": "AB123",
+            "year": 2024,
+        }
+        bill = parse_bill_data(data)
+        assert bill.bill_status is None
 
 
 class TestMapChamberToBody:
