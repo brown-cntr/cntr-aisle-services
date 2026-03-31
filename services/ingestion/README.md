@@ -54,9 +54,23 @@ python -m services.ingestion.src.ingestion --since 2026-01-27
 
 # Dry run - search and fetch but do not write to the database
 python -m services.ingestion.src.ingestion --dry-run
+
+# Ingest a single bill by LegiScan URL
+python -m services.ingestion.src --legiscan-url "https://legiscan.com/CA/bill/123456"
+
+# Ingest a single bill by LegiScan numeric bill_id
+python -m services.ingestion.src --legiscan-id 123456
+
+# Ingest a single bill from a bill-number URL (resolved via LegiScan search)
+python -m services.ingestion.src --legiscan-url "https://legiscan.com/IL/bill/SB3890/2025"
 ```
 
 Exit code: 0 on success (prints ingested count to stdout), 1 on failure.
+
+When `--legiscan-url` is provided, the CLI will:
+
+- Use the numeric `bill_id` directly if the URL is of the form `.../STATE/bill/123456`  
+- Otherwise (e.g. `.../IL/bill/SB3890/2025`), resolve `bill_id` using the LegiScan search API based on the state, bill number, and year encoded in the URL, and then ingest that specific bill.
 
 ### Dry Run
 
