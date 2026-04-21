@@ -1,0 +1,24 @@
+# Default: CPU-only stack builds on cntr-services-base:dev (see docker-compose.yml).
+# For GPU: build a CUDA base tagged cntr-services-base:dev, or pass build-arg BASE_IMAGE
+# pointing at an image derived from e.g. nvidia/cuda:12.4.1-cudnn9-runtime-ubuntu22.04
+# with Python 3.11 and the same pip install as Dockerfile.base.
+
+ARG BASE_IMAGE=cntr-services-base:dev
+FROM ${BASE_IMAGE}
+
+WORKDIR /workspace
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY shared/ ./shared/
+COPY pyproject.toml ./
+
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir -e ".[llm,experiments]" && \
+    python -m spacy download en_core_web_sm
+
+EXPOSE 8888
+
+CMD ["sh", "-c", "exec jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root --ServerApp.token='' --ServerApp.password='' --notebook-dir=/workspace/experiments"]

@@ -1,0 +1,31 @@
+services:
+  base:
+    build:
+      context: .
+      dockerfile: Dockerfile.base
+    image: cntr-services-base:dev
+    volumes:
+      - .:/workspace:cached
+    env_file:
+      - path: .env
+        required: false
+    stdin_open: true
+    tty: true
+
+  data:
+    depends_on:
+      - base
+    build:
+      context: .
+      dockerfile: Dockerfile.data
+      args:
+        BASE_IMAGE: cntr-services-base:dev
+    volumes:
+      - .:/workspace:cached
+    ports:
+      - "8888:8888"
+    env_file:
+      - path: .env
+        required: false
+    stdin_open: true
+    tty: true
