@@ -1,0 +1,25 @@
+{
+  "name": "cntr-base",
+  "dockerComposeFile": "../../docker-compose.yml",
+  "service": "base",
+  "workspaceFolder": "/workspace",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.black-formatter",
+        "charliermarsh.ruff"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "editor.formatOnSave": true,
+        "[python]": {
+          "editor.defaultFormatter": "ms-python.black-formatter"
+        }
+      }
+    }
+  },
+
+  "postCreateCommand": "pip install --no-cache-dir -e '/workspace[dev]'"
+}

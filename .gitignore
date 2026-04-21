@@ -179,7 +179,10 @@ logs/
 *.log
 
 # Docker
-.dockerignore
 docker-compose.override.yml
+docker-compose.local.yml
+
+# Personal development overrides
+.devcontainer/**/devcontainer.local.json
 
 scripts/

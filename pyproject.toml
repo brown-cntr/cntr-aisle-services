@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cntr-shared"
+version = "0.1.0"
+description = "Shared models, database client, and queue interfaces for cntr-services"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "supabase>=2.0.0",
+    "redis>=5.0.0",
+    "rq>=1.16.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-mock>=3.12.0",
+    "black>=24.0.0",
+    "ruff>=0.4.0",
+    "mypy>=1.9.0",
+]
+llm = [
+    "transformers>=4.40.0",
+    "sentence-transformers>=3.0.0",
+    "spacy>=3.7.0",
+    "openai>=1.0.0",
+]
+# torch: install CPU wheel in the data Docker image (Dockerfile.data); locally use PyTorch CPU index.
+experiments = [
+    "jupyter>=1.0.0",
+    "pandas>=2.0.0",
+    "matplotlib>=3.8.0",
+    "seaborn>=0.13.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["shared*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -88,6 +88,19 @@ git clone https://github.com/yourusername/cntr-services.git
 cd cntr-services
 ```
 
+### Dev Containers
+
+This repo defines two Dev Container configurations (general backend vs notebooks/ML):
+
+- **cntr-base** - [`.devcontainer/base/`](.devcontainer/base/): Python 3.11, shared package, and `[dev]` tooling (pytest, black, ruff, mypy). Use for ingestion, LLM, and similarity services.
+- **cntr-data** - [`.devcontainer/data/`](.devcontainer/data/): same base stack plus CPU PyTorch, `[llm,experiments]`, Jupyter on port 8888. Use for `experiments/` notebooks.
+
+From the repo root in VS Code: **Dev Containers: Reopen in Container**, then pick **cntr-base** or **cntr-data**.
+
+**Environment file**: Copy [`.env.example`](.env.example) to `.env` and fill in values when you need Supabase or LegiScan locally. `docker-compose.yml` marks `.env` as optional (`required: false`), so a missing file does not stop Compose from parsing the project.
+
+**Build order**: The `data` image builds `FROM` `cntr-services-base:dev`. Run `docker compose build` (or `docker compose build base` then `docker compose build data`) if a plain build ever fails to produce the base image first.
+
 ## Deployment
 
 Each service will be deployed independently to Railway. For example:
