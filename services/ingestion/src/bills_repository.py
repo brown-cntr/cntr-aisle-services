@@ -125,31 +125,39 @@ class BillsRepository:
             Dictionary mapping "{state} {bill_number}" to list of bills with that state+number
             (a bill can have multiple entries if it has different version_dates)
         """
+        bills_by_key: dict[str, list[dict]] = {}
+        cursor = ""
+        page_size = 1000
         try:
-            result = (
-                self.supabase.table("bills")
-                .select("state, bill_number, external_id, version_date")
-                .execute()
-            )
-
-            bills_by_key = {}
-            for row in result.data:
-                state = row.get("state", "")
-                bill_number = row.get("bill_number", "")
-                if state and bill_number:
-                    key = f"{state} {bill_number}"
-                    if key not in bills_by_key:
-                        bills_by_key[key] = []
-                    bills_by_key[key].append({
-                        "external_id": row.get("external_id"),
-                        "version_date": row.get("version_date"),
-                    })
-
+            while True:
+                query = (
+                    self.supabase.table("bills")
+                    .select("state, bill_number, external_id, version_date")
+                    .order("external_id")
+                    .limit(page_size)
+                )
+                if cursor:
+                    query = query.gt("external_id", cursor)
+                result = query.execute()
+                page = result.data or []
+                for row in page:
+                    state = row.get("state", "")
+                    bill_number = row.get("bill_number", "")
+                    if state and bill_number:
+                        key = f"{state} {bill_number}"
+                        if key not in bills_by_key:
+                            bills_by_key[key] = []
+                        bills_by_key[key].append({
+                            "external_id": row.get("external_id"),
+                            "version_date": row.get("version_date"),
+                        })
+                if len(page) < page_size:
+                    break
+                cursor = page[-1]["external_id"]
             logger.info(
                 f"Retrieved {len(bills_by_key)} unique state+bill_number combinations"
             )
             return bills_by_key
-
         except Exception as e:
             logger.warning(
                 f"Error getting existing bills by state+number: {e}"
@@ -169,10 +177,120 @@ class BillsRepository:
             row["version_date"] = bill.version_date.isoformat()
         return row
 
+    def get_legiscan_ids_missing_session(self) -> List[int]:
+        """Return legiscan_ids of bills that are missing legiscan_session_id.
+
+        Uses cursor-based pagination on legiscan_id to reliably fetch all rows
+        regardless of server-side max_rows limits.
+        """
+        ids: List[int] = []
+        cursor = 0
+        page_size = 1000
+        try:
+            while True:
+                result = (
+                    self.supabase.table("bills")
+                    .select("legiscan_id")
+                    .is_("legiscan_session_id", "null")
+                    .not_.is_("legiscan_id", "null")
+                    .gt("legiscan_id", cursor)
+                    .order("legiscan_id")
+                    .limit(page_size)
+                    .execute()
+                )
+                page = result.data or []
+                for row in page:
+                    if row.get("legiscan_id") is not None:
+                        ids.append(int(row["legiscan_id"]))
+                if len(page) < page_size:
+                    break
+                cursor = ids[-1]
+            logger.info(f"Found {len(ids)} bills missing legiscan_session_id")
+            return ids
+        except Exception as e:
+            logger.warning(f"Error fetching bills missing session ID: {e}")
+            return []
+
+    def get_distinct_session_ids(self) -> List[int]:
+        """Return distinct legiscan_session_ids present in the bills table."""
+        ids: set[int] = set()
+        offset = 0
+        page_size = 1000
+        try:
+            while True:
+                result = (
+                    self.supabase.table("bills")
+                    .select("legiscan_session_id")
+                    .not_.is_("legiscan_session_id", "null")
+                    .range(offset, offset + page_size - 1)
+                    .execute()
+                )
+                page = result.data or []
+                for row in page:
+                    if row.get("legiscan_session_id") is not None:
+                        ids.add(int(row["legiscan_session_id"]))
+                if len(page) < page_size:
+                    break
+                offset += page_size
+            logger.info(f"Found {len(ids)} distinct session IDs in database")
+            return list(ids)
+        except Exception as e:
+            logger.warning(f"Error fetching distinct session IDs: {e}")
+            return []
+
+    def get_change_hashes_for_session(self, session_id: int) -> dict[int, str]:
+        """Return {legiscan_id: change_hash} for all bills in the given session.
+
+        Bills with a NULL change_hash are included with an empty string so they
+        are always treated as changed. Paginates to handle large sessions.
+        """
+        hashes: dict[int, str] = {}
+        offset = 0
+        page_size = 1000
+        try:
+            while True:
+                result = (
+                    self.supabase.table("bills")
+                    .select("legiscan_id, change_hash")
+                    .eq("legiscan_session_id", session_id)
+                    .not_.is_("legiscan_id", "null")
+                    .range(offset, offset + page_size - 1)
+                    .execute()
+                )
+                page = result.data or []
+                for row in page:
+                    if row.get("legiscan_id") is not None:
+                        hashes[int(row["legiscan_id"])] = row.get("change_hash") or ""
+                if len(page) < page_size:
+                    break
+                offset += page_size
+            return hashes
+        except Exception as e:
+            logger.warning(
+                f"Error fetching change hashes for session {session_id}: {e}"
+            )
+            return {}
+
+    def update_bill_by_legiscan_id(self, legiscan_id: int, bill: Bill) -> bool:
+        """Full update of a bill row matched by legiscan_id."""
+        try:
+            bill_dict = self._bill_to_row(bill)
+            bill_dict["updated_at"] = datetime.now().isoformat()
+            self.supabase.table("bills").update(bill_dict).eq(
+                "legiscan_id", legiscan_id
+            ).execute()
+            logger.debug(f"Updated bill legiscan_id={legiscan_id}")
+            return True
+        except Exception as e:
+            logger.error(
+                f"Error updating bill legiscan_id={legiscan_id}: {e}", exc_info=True
+            )
+            return False
+
     def _handle_existing_bill(
         self, existing_bill: dict, bill: Bill, now: str
     ) -> None:
-        """Backfill legiscan_id and update bill_status on existing row."""
+        """Backfill legiscan_id / session / hash and update bill_status on existing row."""
         updates = {}
 
         if existing_bill.get("legiscan_id") is None and bill.legiscan_id is not None:
@@ -182,6 +300,12 @@ class BillsRepository:
 
         if bill.bill_status is not None:
             updates["bill_status"] = bill.bill_status
+
+        if bill.change_hash is not None:
+            updates["change_hash"] = bill.change_hash
+
+        if bill.legiscan_session_id is not None:
+            updates["legiscan_session_id"] = bill.legiscan_session_id
 
         if not updates:
             return

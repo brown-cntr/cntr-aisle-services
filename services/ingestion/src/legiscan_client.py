@@ -177,6 +177,16 @@ class LegiScanClient:
         data = self._make_request("getBill", id=bill_id)
         return data.get("bill", {})
     
+    def get_master_list_raw(self, session_id: int) -> Dict[int, str]:
+        """Returns {bill_id: change_hash} for every bill in the session."""
+        data = self._make_request("getMasterListRaw", id=session_id)
+        masterlist = data.get("masterlist", {})
+        return {
+            int(v["bill_id"]): v["change_hash"]
+            for v in masterlist.values()
+            if isinstance(v, dict) and "bill_id" in v and "change_hash" in v
+        }
+
     def get_bill_text(self, text_id: int) -> Dict[str, Any]:
         """
         Get bill text document

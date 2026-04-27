@@ -199,3 +199,131 @@ class IngestionService:
         except Exception as e:
             logger.error(f"Error during ingestion: {e}", exc_info=True)
             raise
+
+    def backfill_session_data(self, dry_run: bool = False) -> int:
+        """
+        One-time backfill: populate change_hash and legiscan_session_id for
+        existing bills that are missing those fields.
+
+        Fetches via getBill matched on legiscan_id (not external_id), so it
+        works correctly even if version_date has changed since the bill was inserted.
+
+        Returns:
+            Number of bills updated (or would be updated in dry run)
+        """
+        if dry_run:
+            logger.info("DRY RUN: No database writes will be performed")
+        logger.info("Starting session data backfill...")
+
+        legiscan_ids = self.bills_repository.get_legiscan_ids_missing_session()
+        if not legiscan_ids:
+            logger.info("All bills already have legiscan_session_id — nothing to backfill")
+            return 0
+
+        logger.info(f"Backfilling {len(legiscan_ids)} bill(s)...")
+
+        from .parser import parse_bill_data
+        updated = 0
+
+        for bill_id in legiscan_ids:
+            try:
+                bill_data = self.legiscan_client.get_bill(bill_id)
+                if not bill_data:
+                    logger.warning(f"No data for bill {bill_id}, skipping")
+                    continue
+                bill = parse_bill_data(bill_data)
+                if dry_run:
+                    logger.info(
+                        f"  Would backfill: {bill.state} {bill.bill_number} "
+                        f"(legiscan_id={bill_id}, session={bill.legiscan_session_id})"
+                    )
+                else:
+                    self.bills_repository.update_bill_by_legiscan_id(bill_id, bill)
+                updated += 1
+            except Exception as e:
+                logger.error(f"Error backfilling bill {bill_id}: {e}", exc_info=True)
+                continue
+
+        logger.info(f"Backfill complete: {updated} bill(s) updated")
+        return updated
+
+    def sync_bills(self, dry_run: bool = False) -> int:
+        """
+        Sync existing bills using getMasterListRaw change_hash comparison.
+
+        For each session that has bills in the database, fetches the current
+        change_hash for every bill and updates only those whose hash has changed.
+
+        Returns:
+            Number of bills updated (or would be updated in dry run)
+        """
+        if dry_run:
+            logger.info("DRY RUN: No database writes will be performed")
+        logger.info("Starting bill sync...")
+
+        session_ids = self.bills_repository.get_distinct_session_ids()
+        if not session_ids:
+            logger.warning("No sessions found in database; nothing to sync")
+            return 0
+
+        logger.info(f"Checking {len(session_ids)} session(s) for changes")
+
+        total_updated = 0
+
+        for session_id in session_ids:
+            try:
+                api_hashes = self.legiscan_client.get_master_list_raw(session_id)
+                db_hashes = self.bills_repository.get_change_hashes_for_session(
+                    session_id
+                )
+
+                # Only consider bill_ids we already track in the DB
+                changed_ids = [
+                    bill_id
+                    for bill_id, api_hash in api_hashes.items()
+                    if bill_id in db_hashes and db_hashes[bill_id] != api_hash
+                ]
+
+                logger.info(
+                    f"Session {session_id}: {len(db_hashes)} bills tracked, "
+                    f"{len(changed_ids)} changed"
+                )
+
+                for bill_id in changed_ids:
+                    try:
+                        bill_data = self.legiscan_client.get_bill(bill_id)
+                        if not bill_data:
+                            logger.warning(
+                                f"No data returned for bill {bill_id}, skipping"
+                            )
+                            continue
+
+                        from .parser import parse_bill_data
+                        bill = parse_bill_data(bill_data)
+
+                        if dry_run:
+                            logger.info(
+                                f"  Would update: {bill.state} {bill.bill_number} "
+                                f"(legiscan_id={bill_id}) — {bill.bill_status}"
+                            )
+                        else:
+                            self.bills_repository.update_bill_by_legiscan_id(
+                                bill_id, bill
+                            )
+
+                        total_updated += 1
+
+                    except Exception as e:
+                        logger.error(
+                            f"Error syncing bill {bill_id}: {e}", exc_info=True
+                        )
+                        continue
+
+            except Exception as e:
+                logger.error(
+                    f"Error syncing session {session_id}: {e}", exc_info=True
+                )
+                continue
+
+        logger.info(f"Sync complete: {total_updated} bill(s) updated")
+        return total_updated

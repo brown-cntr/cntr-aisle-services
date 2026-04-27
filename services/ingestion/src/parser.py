@@ -82,6 +82,8 @@ def parse_bill_data(legiscan_bill: Dict[str, Any]) -> Bill:
     url = legiscan_bill.get("state_link") or legiscan_url
 
     bill_status = _parse_bill_status(legiscan_bill.get("status"))
+    change_hash = legiscan_bill.get("change_hash")
+    legiscan_session_id = legiscan_bill.get("session", {}).get("session_id")
 
     bill_number_raw = legiscan_bill.get("bill_number", "")
     version_date_str = version_date.isoformat() if version_date else ""
@@ -109,6 +111,8 @@ def parse_bill_data(legiscan_bill: Dict[str, Any]) -> Bill:
         legiscan_id=bill_id,
         version_date=version_date,
         bill_status=bill_status,
+        change_hash=change_hash,
+        legiscan_session_id=legiscan_session_id,
     )
 
 def _map_chamber_to_body(chamber: str, bill_number: str) -> BillBody:
