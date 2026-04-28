@@ -27,6 +27,8 @@ class Bill(BaseModel):
     openstates_url: Optional[str] = None
     version_date: Optional[date] = None
     bill_status: Optional[str] = None
+    change_hash: Optional[str] = None
+    legiscan_session_id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     full_text: Optional[str] = None

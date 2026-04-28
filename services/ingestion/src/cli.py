@@ -178,6 +178,19 @@ def main():
         help="Only store bills with version_date on or after this date (ISO date or datetime, e.g. 2026-01-27 or 2026-01-27T12:00:00+00:00)",
     )
 
+    parser.add_argument(
+        "--sync",
+        action="store_true",
+        default=False,
+        help="Sync existing bills using change_hash comparison via getMasterListRaw",
+    )
+    parser.add_argument(
+        "--backfill",
+        action="store_true",
+        default=False,
+        help="One-time backfill: populate change_hash and legiscan_session_id for existing bills",
+    )
+
     single_group = parser.add_mutually_exclusive_group()
     single_group.add_argument(
         "--legiscan-url",
@@ -248,6 +261,20 @@ def main():
                 extra={"legiscan_bill_id": bill_id},
             )
             count = _ingest_single_bill_by_legiscan_id(bill_id)
+            print(count)
+            sys.exit(0)
+
+        # Backfill path: populate change_hash / legiscan_session_id on existing bills
+        if args.backfill:
+            service = IngestionService()
+            count = service.backfill_session_data(dry_run=args.dry_run)
+            print(count)
+            sys.exit(0)
+
+        # Sync path: update existing bills via change_hash comparison
+        if args.sync:
+            service = IngestionService()
+            count = service.sync_bills(dry_run=args.dry_run)
             print(count)
             sys.exit(0)
 
