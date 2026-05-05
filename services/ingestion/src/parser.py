@@ -88,8 +88,9 @@ def parse_bill_data(legiscan_bill: Dict[str, Any]) -> Bill:
     bill_number_raw = legiscan_bill.get("bill_number", "")
     version_date_str = version_date.isoformat() if version_date else ""
 
-    if state and bill_number_raw and version_date_str:
-        external_id = f"{state} {bill_number_raw} {version_date_str}"
+    # Include legiscan_id so each bill session is a distinct row
+    if state and bill_number_raw and version_date_str and bill_id:
+        external_id = f"{state} {bill_number_raw} {version_date_str} {bill_id}"
     else:
         logger.warning(
             f"Cannot construct external_id for bill {bill_id}: "

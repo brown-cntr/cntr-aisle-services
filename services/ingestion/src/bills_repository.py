@@ -290,13 +290,10 @@ class BillsRepository:
     def _handle_existing_bill(
         self, existing_bill: dict, bill: Bill, now: str
     ) -> None:
-        """Backfill legiscan_id / session / hash and update bill_status on existing row."""
+        """
+        Update metadata on an existing bill row matched by legiscan_id.
+        """
         updates = {}
-
-        if existing_bill.get("legiscan_id") is None and bill.legiscan_id is not None:
-            updates["legiscan_id"] = bill.legiscan_id
-            if bill.legiscan_url:
-                updates["legiscan_url"] = bill.legiscan_url
 
         if bill.bill_status is not None:
             updates["bill_status"] = bill.bill_status
@@ -307,6 +304,10 @@ class BillsRepository:
         if bill.legiscan_session_id is not None:
             updates["legiscan_session_id"] = bill.legiscan_session_id
 
+        # Keep external_id current
+        if bill.external_id and bill.external_id != existing_bill.get("external_id"):
+            updates["external_id"] = bill.external_id
+
         if not updates:
             return
 
@@ -316,25 +317,19 @@ class BillsRepository:
                 "id", existing_bill["id"]
             ).execute()
             logger.debug(
-                f"Updated existing bill {bill.external_id}: {list(updates.keys())}"
+                f"Updated existing bill legiscan_id={bill.legiscan_id}: {list(updates.keys())}"
             )
         except Exception as e:
             logger.warning(
-                f"Could not update existing bill {bill.external_id}: {e}"
+                f"Could not update existing bill legiscan_id={bill.legiscan_id}: {e}"
             )
-
-    @staticmethod
-    def _is_duplicate_key_error(exc: Exception) -> bool:
-        """True if the exception is a Postgres unique violation for bills_state_year_bill_number_body_key."""
-        s = str(exc) + repr(exc)
-        if "bills_state_year_bill_number_body_key" not in s:
-            return False
-        return "23505" in s or "duplicate key" in s.lower()
 
     def store_bills(self, bills: List[Bill]) -> int:
         """
-        Store bills in Supabase. Only inserts new bills; skips any already
-        present (by external_id or by state/year/bill_number/body).
+        Store bills in Supabase. Inserts new bills and skips any already
+        present (matched by legiscan_id). Bills from a different session
+        sharing the same bill number are always inserted as new rows because
+        they carry a distinct legiscan_id.
 
         Args:
             bills: List of Bill model instances
@@ -353,16 +348,31 @@ class BillsRepository:
                     f"Storing bill {bill.external_id} ({i}/{len(bills)})..."
                 )
 
-                existing = (
-                    self.supabase.table("bills")
-                    .select("id, external_id, version_date, legiscan_id")
-                    .eq("external_id", bill.external_id)
-                    .execute()
-                )
+                # Look up by legiscan_id and falls back to external_id if needed
+                existing = None
+                if bill.legiscan_id is not None:
+                    result = (
+                        self.supabase.table("bills")
+                        .select("id, external_id, legiscan_id")
+                        .eq("legiscan_id", bill.legiscan_id)
+                        .execute()
+                    )
+                    if result.data:
+                        existing = result
+
+                if existing is None and bill.external_id:
+                    result = (
+                        self.supabase.table("bills")
+                        .select("id, external_id, legiscan_id")
+                        .eq("external_id", bill.external_id)
+                        .execute()
+                    )
+                    if result.data:
+                        existing = result
 
                 bill_dict = self._bill_to_row(bill)
 
-                if existing.data:
+                if existing and existing.data:
                     self._handle_existing_bill(existing.data[0], bill, now)
                     logger.debug(
                         f"Skipped bill {bill.external_id} (already in database)"
@@ -389,17 +399,10 @@ class BillsRepository:
                         new_count += 1
                         count += 1
                     except Exception as insert_error:
-                        if self._is_duplicate_key_error(insert_error):
-                            logger.info(
-                                f"Skipped bill {bill.external_id} "
-                                f"(duplicate key, already in database)"
-                            )
-                            skipped_count += 1
-                        else:
-                            logger.error(
-                                f"Error inserting {bill.external_id}: {insert_error}",
-                                exc_info=True,
-                            )
+                        logger.error(
+                            f"Error inserting {bill.external_id}: {insert_error}",
+                            exc_info=True,
+                        )
 
             except Exception as e:
                 logger.error(
