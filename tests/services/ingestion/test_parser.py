@@ -33,7 +33,7 @@ class TestParseBillData:
     def test_complete(self, sample_bill_data):
         bill = parse_bill_data(sample_bill_data)
         assert isinstance(bill, Bill)
-        assert bill.external_id == "CA AB123 2024-01-15"
+        assert bill.external_id == "CA AB123 2024-01-15 123456"
         assert bill.title == "An Act Relating to Artificial Intelligence Regulation"
         assert bill.state == "CA"
         assert bill.year == 2024
