@@ -43,6 +43,7 @@ class IngestionService:
         since_date: Optional[date] = None,
         dry_run: bool = False,
         limit: Optional[int] = None,
+        include_full_text: bool = False,
     ) -> int:
         """
         Main ingestion workflow: search, fetch, and store AI-related bills
@@ -55,6 +56,8 @@ class IngestionService:
             since_date: If set, only store bills with version_date >= this date (for time-window ingestion)
             dry_run: If True, search and fetch but do not insert or update in the database
             limit: If set, only process this many bills
+            include_full_text: If True, also fetch + store each bill's full document
+                text (one extra getBillText API call per bill)
 
         Returns:
             Number of bills successfully ingested (or would be ingested in dry run)
@@ -153,6 +156,7 @@ class IngestionService:
             bills = self.legiscan_client.get_bills_from_search_results(
                 search_results,
                 existing_legiscan_ids=existing_legiscan_ids,
+                include_text=include_full_text,
             )
 
             if not bills:

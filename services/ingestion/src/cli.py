@@ -104,7 +104,7 @@ def _resolve_bill_id_from_url(url: str) -> int:
         raise ValueError(f"Invalid bill_id returned from LegiScan search: {bill_id!r}") from exc
 
 
-def _ingest_single_bill_by_legiscan_id(bill_id: int) -> int:
+def _ingest_single_bill_by_legiscan_id(bill_id: int, include_full_text: bool = False) -> int:
     """
     Fetch a single bill from LegiScan by bill_id and store it in Supabase.
 
@@ -117,6 +117,8 @@ def _ingest_single_bill_by_legiscan_id(bill_id: int) -> int:
         raise RuntimeError(f"No data returned for LegiScan bill {bill_id}")
 
     bill = parse_bill_data(bill_data)
+    if include_full_text:
+        bill.full_text = client.fetch_bill_full_text(bill_data)
 
     repository = BillsRepository(get_supabase_client())
     return repository.store_bills([bill])
@@ -178,6 +180,12 @@ def main():
         help="Only store bills with version_date on or after this date (ISO date or datetime, e.g. 2026-01-27 or 2026-01-27T12:00:00+00:00)",
     )
 
+    parser.add_argument(
+        "--full-text",
+        action="store_true",
+        default=False,
+        help="Also fetch and store each bill's full document text (one extra getBillText API call per bill)",
+    )
     parser.add_argument(
         "--sync",
         action="store_true",
@@ -260,7 +268,9 @@ def main():
                 "Ingesting single bill from LegiScan",
                 extra={"legiscan_bill_id": bill_id},
             )
-            count = _ingest_single_bill_by_legiscan_id(bill_id)
+            count = _ingest_single_bill_by_legiscan_id(
+                bill_id, include_full_text=args.full_text
+            )
             print(count)
             sys.exit(0)
 
@@ -289,6 +299,7 @@ def main():
             since_date=since_date,
             dry_run=args.dry_run,
             limit=args.limit,
+            include_full_text=args.full_text,
         )
         print(count)
         sys.exit(0)
