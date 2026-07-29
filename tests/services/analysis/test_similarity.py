@@ -54,3 +54,59 @@ class TestClassify:
 
 def _bt(ext, text):
     return BillText(external_id=ext, full_text=text)
+
+
+class TestCompareBillAgainst:
+    def test_excludes_self_and_filters_by_min_score(self):
+        target = _bt("A", "the state shall regulate artificial intelligence systems")
+        candidates = [
+            _bt("A", "the state shall regulate artificial intelligence systems"),  # self
+            _bt("B", "the state shall regulate artificial intelligence systems"),  # dup
+            _bt("C", "completely different unrelated statutory language entirely"),
+        ]
+        results = sim.compare_bill_against(target, candidates, min_score=0.3)
+        ids = [r.target_bill_id for r in results]
+        assert "A" not in ids          # self excluded
+        assert "B" in ids              # near-duplicate kept
+        assert "C" not in ids          # below threshold dropped
+
+    def test_top_k_and_sorted_desc(self):
+        target = _bt("A", "one two three four five six")
+        candidates = [
+            _bt("B", "one two three four five six"),        # identical -> 1.0
+            _bt("C", "one two three four five seven"),      # close
+            _bt("D", "one two three ten eleven twelve"),    # weaker
+        ]
+        results = sim.compare_bill_against(target, candidates, min_score=0.0, top_k=2)
+        assert len(results) == 2
+        assert results[0].score >= results[1].score
+        assert results[0].target_bill_id == "B"
+
+    def test_skips_candidate_without_text(self):
+        target = _bt("A", "one two three four")
+        results = sim.compare_bill_against(target, [_bt("B", None)], min_score=0.0)
+        assert results == []
+
+
+class TestCompareAllPairs:
+    def test_unique_pairs_only(self):
+        bills = [
+            _bt("A", "one two three four five"),
+            _bt("B", "one two three four five"),
+            _bt("C", "one two three four five"),
+        ]
+        results = sim.compare_all_pairs(bills, min_score=0.5)
+        pairs = {(r.source_bill_id, r.target_bill_id) for r in results}
+        # 3 bills -> 3 unique unordered pairs, each emitted once.
+        assert pairs == {("A", "B"), ("A", "C"), ("B", "C")}
+
+    def test_filters_and_skips_missing_text(self):
+        bills = [
+            _bt("A", "shared language about artificial intelligence regulation here"),
+            _bt("B", "shared language about artificial intelligence regulation here"),
+            _bt("C", None),
+            _bt("D", "utterly distinct unrelated wording with nothing common"),
+        ]
+        results = sim.compare_all_pairs(bills, min_score=0.5)
+        pairs = {(r.source_bill_id, r.target_bill_id) for r in results}
+        assert pairs == {("A", "B")}

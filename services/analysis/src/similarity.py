@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Set, Tuple
 
-from shared.models.bill_similarity import SimilarityClass
+from shared.models.bill_similarity import BillSimilarity, SimilarityClass
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
@@ -80,3 +80,66 @@ def classify(
     if score >= related_threshold:
         return SimilarityClass.RELATED.value
     return SimilarityClass.UNRELATED.value
+
+
+def _make_similarity(a: BillText, b: BillText, score: float, k: int) -> BillSimilarity:
+    return BillSimilarity(
+        source_bill_id=a.external_id,
+        target_bill_id=b.external_id,
+        score=score,
+        classification=classify(score),
+        method=f"jaccard+{k}gram",
+    )
+
+
+def compare_bill_against(
+    target: BillText,
+    candidates: Sequence[BillText],
+    *,
+    min_score: float = DEFAULT_RELATED_THRESHOLD,
+    top_k: Optional[int] = None,
+    k: int = DEFAULT_SHINGLE_K,
+) -> List[BillSimilarity]:
+    """Score one bill against many; return matches >= ``min_score``, highest first.
+
+    Skips the target itself (by external_id) and any candidate without text.
+    """
+    results: List[BillSimilarity] = []
+    for cand in candidates:
+        if cand.external_id == target.external_id:
+            continue
+        if not target.full_text or not cand.full_text:
+            continue
+        score = text_similarity(target.full_text, cand.full_text, k)
+        if score >= min_score:
+            results.append(_make_similarity(target, cand, score, k))
+    results.sort(key=lambda r: r.score, reverse=True)
+    return results[:top_k] if top_k is not None else results
+
+
+def compare_all_pairs(
+    bills: Sequence[BillText],
+    *,
+    min_score: float = DEFAULT_RELATED_THRESHOLD,
+    k: int = DEFAULT_SHINGLE_K,
+) -> List[BillSimilarity]:
+    """Score every unique unordered pair; return matches >= ``min_score``.
+
+    Each pair is emitted once (source_bill_id < target ordering by list index).
+    Bills without text are skipped. O(n^2) in the number of bills.
+    """
+    results: List[BillSimilarity] = []
+    n = len(bills)
+    for i in range(n):
+        a = bills[i]
+        if not a.full_text:
+            continue
+        for j in range(i + 1, n):
+            b = bills[j]
+            if not b.full_text:
+                continue
+            score = text_similarity(a.full_text, b.full_text, k)
+            if score >= min_score:
+                results.append(_make_similarity(a, b, score, k))
+    results.sort(key=lambda r: r.score, reverse=True)
+    return results
