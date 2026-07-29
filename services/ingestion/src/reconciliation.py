@@ -224,3 +224,10 @@ def reconcile_bills(
         "total": len(merged),
     }
     return merged, stats
+
+
+def mark_as_model_bill(bill: Bill) -> Bill:
+    """Return a copy of ``bill`` labeled as model legislation (source="model")."""
+    tagged = bill.model_copy(deep=True)
+    tagged.source = BillSource.MODEL.value
+    return tagged

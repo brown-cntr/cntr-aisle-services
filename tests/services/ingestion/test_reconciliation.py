@@ -144,3 +144,9 @@ class TestReconcileBills:
         merged, stats = rec.reconcile_bills([legi], [os_a, os_b])
         assert stats["matched"] == 1
         assert stats["openstates_only"] == 1
+
+
+class TestMarkModelBill:
+    def test_sets_source(self):
+        tagged = rec.mark_as_model_bill(_bill(bill_number="SB53"))
+        assert tagged.source == BillSource.MODEL.value
