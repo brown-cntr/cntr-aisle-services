@@ -25,6 +25,31 @@ class TestStripLineNumberGutters:
         assert "\n2\n" not in "\n" + out + "\n"
 
 
+class TestRemoveRepeatedFurniture:
+    def test_removes_repeated_short_header(self):
+        header = "34-LS0258 Draft"
+        text = "\n".join([header, "real content one", header, "real content two", header, "x"])
+        out = dc.remove_repeated_furniture(text, min_repeats=3)
+        assert header not in out
+        assert "real content one" in out and "real content two" in out
+
+    def test_preserves_distinct_appropriation_line_items(self):
+        # Digit-varying line items must not collapse into "boilerplate".
+        text = "\n".join(
+            [
+                "- $153,663,700 from General Fund; and",
+                "- $6,750,000 from General Fund; and",
+                "- $4,500,000 from General Fund; and",
+            ]
+        )
+        assert dc.remove_repeated_furniture(text) == text
+
+    def test_protects_subsection_markers(self):
+        text = "\n".join(["(a)", "text a", "(b)", "text b", "(a)", "text c", "(a)"])
+        out = dc.remove_repeated_furniture(text, min_repeats=2)
+        assert "(a)" in out
+
+
 class TestStripPageMarkers:
     def test_removes_dash_wrapped_footer_on_short_line(self):
         text = "body text here\n**HB0110E** **-1-** **SCS CSHB 110**\nmore body"
@@ -87,6 +112,14 @@ class TestCleanDocument:
         text = "\n".join([f"{i} line {i}" for i in range(1, 9)])
         out = dc.clean_document(text, mime_id=2)
         assert "1 line 1" not in out and "line 1" in out
+
+    def test_guard_reverts_catastrophic_removal(self):
+        # A pathological input where furniture removal would nuke most content is
+        # reverted by the safety guard rather than destroying the text.
+        line = "SECTION x. add 26-1-119.5 concerning things " * 3
+        big = "\n".join(line for _ in range(20))
+        out = dc.clean_document(big, mime_id=2)
+        assert dc._nonspace_len(out) >= dc._nonspace_len(big) * (1 - dc._MAX_SAFE_REMOVAL)
 
     def test_empty_passthrough(self):
         assert dc.clean_document("", mime_id=2) == ""

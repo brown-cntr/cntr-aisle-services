@@ -1,13 +1,14 @@
 """Format-aware cleanup for extracted bill text.
 
-Runs after MIME extraction to strip PDF layout furniture (line-number gutters)
-that structured HTML/XML never carries. Each removal is validated before it fires
+Runs after MIME extraction to strip PDF layout furniture (line-number gutters,
+running headers/footers, page numbers) that structured HTML/XML never carries. Each removal is validated before it fires
 and guarded against over-removal, so statutory text is preserved.
 """
 
 from __future__ import annotations
 
 import re
+from collections import Counter
 from typing import List, Optional
 
 # PDF and legacy office formats carry layout furniture; HTML (1) / XML do not.
@@ -23,6 +24,8 @@ _EMBEDDED_PAGE_NUMBER = re.compile(r"[-–]\s*\d{1,4}\s*[-–]")
 _FOOTER_MAX_LEN = 60
 # Revert a step that removes more than this fraction of non-whitespace chars.
 _MAX_SAFE_REMOVAL = 0.40
+# Subsection/list markers to never treat as furniture: "(a)", "(1)", "1.", "iv.".
+_SUBSECTION_MARKER = re.compile(r"^[(\[]?[A-Za-z0-9]{1,4}[)\].]?$")
 # A leading gutter line: optional markdown prefix, small integer, then content.
 _GUTTER_LINE = re.compile(r"^(?P<prefix>(?:#{1,6}|[*>-]+)?\s*)(?P<num>\d{1,3})[ \t]+(?P<rest>\S.*)$")
 _BARE_SMALL_INT = re.compile(r"^(\d{1,3})$")
@@ -76,6 +79,34 @@ def strip_page_markers(text: str) -> str:
         else:
             kept.append(line)
     return "\n".join(kept)
+
+
+def remove_repeated_furniture(text: str, min_repeats: int = 3, max_len: int = 90) -> str:
+    """Drop short lines that repeat verbatim >= min_repeats times (guarded by caller).
+
+    Exact matching keeps distinct appropriations items ("$153,663,700 from General
+    Fund") that differ only by amount; subsection markers are protected.
+    """
+    lines = text.split("\n")
+
+    def canon(line: str) -> str:
+        return " ".join(line.split())
+
+    counts: Counter[str] = Counter(
+        canon(s) for line in lines if (s := line.strip()) and not _SUBSECTION_MARKER.match(s)
+    )
+    cleaned: List[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if (
+            stripped
+            and len(stripped) <= max_len
+            and not _SUBSECTION_MARKER.match(stripped)
+            and counts[canon(stripped)] >= min_repeats
+        ):
+            continue
+        cleaned.append(line)
+    return "\n".join(cleaned)
 
 
 def dehyphenate(text: str) -> str:
@@ -134,9 +165,9 @@ def _guard(original: str, candidate: str) -> str:
 def clean_document(text: str, mime_id: int, state: Optional[str] = None) -> str:
     """Clean extracted text for its source format and state.
 
-    PDF-family formats get gutter (leading + inline) and page-marker removal;
-    HTML/XML get only de-hyphenation, preserving the per-state HTML normalization
-    in ``text_normalization``.
+    PDF-family formats get gutter (leading + inline), page-marker, and furniture
+    removal; HTML/XML get only de-hyphenation, preserving the per-state HTML
+    normalization in ``text_normalization``.
     """
     if not text:
         return text
@@ -144,4 +175,5 @@ def clean_document(text: str, mime_id: int, state: Optional[str] = None) -> str:
         text = _guard(text, strip_line_number_gutters(text))
         text = _guard(text, strip_inline_gutters(text))
         text = strip_page_markers(text)  # pattern-verified -> unguarded
+        text = _guard(text, remove_repeated_furniture(text))
     return dehyphenate(text)
