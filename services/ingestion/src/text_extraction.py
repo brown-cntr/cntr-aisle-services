@@ -225,12 +225,36 @@ def extract_text_from_api_payload(payload: Dict[str, Any], state: str) -> Tuple[
     return mime_id, extracted, state_link
 
 
+# Preferred document formats among docs of the same bill version (lower == better).
+# HTML/XML convert to cleaner markdown than the PDF text layer.
+_FORMAT_PREFERENCE = ("html", "xml")
+
+
+def _format_rank(entry: Dict[str, Any]) -> int:
+    """Rank a ``texts`` entry by format via ``mime_id`` (1 == HTML) or ``mime`` string."""
+    if entry.get("mime_id") in (1, "1"):
+        return _FORMAT_PREFERENCE.index("html")
+    mime = str(entry.get("mime", "")).lower()
+    for rank, token in enumerate(_FORMAT_PREFERENCE):
+        if token in mime:
+            return rank
+    return len(_FORMAT_PREFERENCE)
+
+
 def select_latest_text_entry(entries: Iterable[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Pick the most recent text entry from a bill's ``texts`` list by its date field."""
+    """Pick the newest text version, preferring HTML/XML among docs of that version.
+
+    Never returns an older version just to get a preferred format (fixes the Utah
+    case where a PDF was picked over an equivalent HTML of the same version).
+    """
     valid: List[Dict[str, Any]] = [e for e in entries if isinstance(e, dict)]
     if not valid:
         return None
-    return max(valid, key=lambda entry: str(entry.get("date", "")))
+
+    latest_date = max(str(entry.get("date", "")) for entry in valid)
+    same_version = [e for e in valid if str(e.get("date", "")) == latest_date]
+    # Stable: ties keep original order (previous "first entry wins" behaviour).
+    return min(enumerate(same_version), key=lambda pair: (_format_rank(pair[1]), pair[0]))[1]
 
 
 def extract_full_text(text_payload: Dict[str, Any], state: str) -> Optional[str]:

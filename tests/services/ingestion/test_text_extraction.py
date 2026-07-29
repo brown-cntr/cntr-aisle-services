@@ -40,6 +40,43 @@ class TestSelectLatestTextEntry:
         entries = ["not-a-dict", {"doc_id": 7, "date": "2024-02-02"}]
         assert te.select_latest_text_entry(entries)["doc_id"] == 7
 
+    def test_prefers_html_among_same_date_docs(self):
+        # The Utah case: same version served as both PDF and HTML; prefer HTML.
+        entries = [
+            {"doc_id": 10, "date": "2024-06-01", "mime_id": 2, "mime": "application/pdf"},
+            {"doc_id": 11, "date": "2024-06-01", "mime_id": 1, "mime": "text/html"},
+        ]
+        assert te.select_latest_text_entry(entries)["doc_id"] == 11
+
+    def test_html_preference_uses_mime_string_fallback(self):
+        entries = [
+            {"doc_id": 10, "date": "2024-06-01", "mime": "application/pdf"},
+            {"doc_id": 11, "date": "2024-06-01", "mime": "text/html"},
+        ]
+        assert te.select_latest_text_entry(entries)["doc_id"] == 11
+
+    def test_xml_preferred_over_pdf(self):
+        entries = [
+            {"doc_id": 10, "date": "2024-06-01", "mime": "application/pdf"},
+            {"doc_id": 11, "date": "2024-06-01", "mime": "text/xml"},
+        ]
+        assert te.select_latest_text_entry(entries)["doc_id"] == 11
+
+    def test_html_preferred_over_xml(self):
+        entries = [
+            {"doc_id": 10, "date": "2024-06-01", "mime": "application/xml"},
+            {"doc_id": 11, "date": "2024-06-01", "mime_id": 1},
+        ]
+        assert te.select_latest_text_entry(entries)["doc_id"] == 11
+
+    def test_latest_version_wins_over_older_html(self):
+        # Never swap to an older HTML version; the newest date always wins.
+        entries = [
+            {"doc_id": 1, "date": "2024-06-01", "mime_id": 2},  # newest, PDF
+            {"doc_id": 2, "date": "2024-01-01", "mime_id": 1},  # older, HTML
+        ]
+        assert te.select_latest_text_entry(entries)["doc_id"] == 1
+
 
 class TestNormalizeExtractedText:
     def test_normalizes_line_endings(self):
