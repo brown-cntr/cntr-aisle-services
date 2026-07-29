@@ -25,6 +25,34 @@ class TestStripLineNumberGutters:
         assert "\n2\n" not in "\n" + out + "\n"
 
 
+class TestStripInlineGutters:
+    def test_removes_sequential_inline_numbers(self):
+        # A running counter 1..12 embedded mid-line (needs >= 10 tokens to trigger).
+        words = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta",
+                 "theta", "iota", "kappa", "lambda", "mu", "nu"]
+        text = " ".join(f"{w} {i}" for i, w in enumerate(words, 1)) + " end"
+        out = dc.strip_inline_gutters(text)
+        assert " 1 " not in out and " 7 " not in out and " 12 " not in out
+        assert "alpha" in out and "mu" in out
+
+    def test_survives_content_interleaved_with_gutter(self):
+        # Statute-ish content numbers interleaved with the running counter 1..12.
+        parts = []
+        for i in range(1, 13):
+            parts.append(f"provision {i} concerning section 4 of the code")
+        out = dc.strip_inline_gutters(" ".join(parts))
+        # The counter values are removed; the repeated content "4" is kept.
+        assert "provision" in out and "section" in out
+
+    def test_ignores_non_sequential_prose_numbers(self):
+        # District ordinals / years are not sequential -> must be kept.
+        text = "Representatives Scott of the 76 district, Bell of the 63 district, Davis of the 87 area"
+        assert dc.strip_inline_gutters(text) == text
+
+    def test_too_few_tokens_no_change(self):
+        assert dc.strip_inline_gutters("a 1 b 2 c") == "a 1 b 2 c"
+
+
 class TestCleanDocument:
     def test_html_only_dehyphenates(self):
         text = "inter-\nstate commerce\n1 not a gutter here"
