@@ -172,6 +172,17 @@ LegiScan → Supabase Schema:
 - `state_link` or `url` → `url`; LegiScan `url` → `legiscan_url`
 - `status_date` (or first history date) → `version_date`
 - `bill_id` → `legiscan_id`
+- latest `texts[]` document, fetched via getBillText and decoded by MIME type → `full_text` (only with `--full-text`)
+- reconciliation provenance (`legiscan` / `openstates` / `both` / `model`) → `source`
+
+### New database columns
+
+`full_text` and `source` are written only when populated (the row builder uses `exclude_none=True`), so default LegiScan-only ingestion is unaffected. To persist them, the Supabase `bills` table needs matching nullable text columns:
+
+```sql
+alter table bills add column if not exists full_text text;
+alter table bills add column if not exists source   text;
+```
 
 ## Full Text Extraction
 
