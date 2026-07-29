@@ -61,6 +61,10 @@ python -m services.ingestion.src --legiscan-url "https://legiscan.com/CA/bill/12
 # Ingest a single bill by LegiScan numeric bill_id
 python -m services.ingestion.src --legiscan-id 123456
 
+# Also fetch + store each bill's full document text (one extra getBillText call per bill)
+python -m services.ingestion.src --full-text
+python -m services.ingestion.src --legiscan-id 123456 --full-text
+
 # Ingest a single bill from a bill-number URL (resolved via LegiScan search)
 python -m services.ingestion.src --legiscan-url "https://legiscan.com/IL/bill/SB3890/2025"
 ```
@@ -168,6 +172,18 @@ LegiScan → Supabase Schema:
 - `state_link` or `url` → `url`; LegiScan `url` → `legiscan_url`
 - `status_date` (or first history date) → `version_date`
 - `bill_id` → `legiscan_id`
+
+## Full Text Extraction
+
+With `--full-text`, ingestion also pulls each bill's actual document text:
+
+1. Select the most recent entry in the bill's `texts[]` list (by date).
+2. Fetch it via `getBillText` (one extra API call per bill).
+3. Decode by MIME type into plain text and store in `Bill.full_text`.
+
+Supported MIME types: HTML (with per-state strikethrough normalization), PDF (converted to markdown via `pymupdf4llm`, falling back to the `PyMuPDF` text layer), WordPerfect / legacy `.doc` / RTF (via pandoc). Extraction dependencies (`beautifulsoup4`, `markdownify`, `pymupdf4llm`, `PyMuPDF`, `pypandoc`) are listed in `requirements.txt` and are all optional at runtime: a missing dependency degrades that MIME type to a deterministic `[...]` marker rather than failing ingestion. A single undecodable document yields `full_text = None`; it never aborts the run.
+
+Because it adds one API call per bill, `--full-text` is off by default to stay within LegiScan quota; enable it when you need the text (e.g. for downstream clause analysis).
 
 ## Credit
 Much of the filtering query and LegiScan API knowledge provided by [Timothy Fong](https://github.com/Timfon)
