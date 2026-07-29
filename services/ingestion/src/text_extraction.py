@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import tempfile
 from collections.abc import Callable
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+from .document_cleaning import clean_document
 
 try:
     from bs4 import BeautifulSoup  # type: ignore
@@ -144,16 +147,42 @@ _MIME_HANDLERS: Dict[int, Callable[[bytes, str], str]] = {
 }
 
 
+_MARKER_PREFIX = "["  # extraction markers like "[PDF extraction unavailable: ...]"
+
+# Matches 3+ consecutive newlines (allowing trailing spaces on the blank lines).
+_EXCESS_BLANK_LINES = re.compile(r"\n[ \t]*(?:\n[ \t]*){2,}\n")
+
+
+def normalize_extracted_text(text: str) -> str:
+    """Final whitespace tidy: normalize line endings, drop form feeds, collapse blanks.
+
+    Structural cleanup (gutters, headers/footers) is handled earlier by
+    ``document_cleaning.clean_document``.
+    """
+    if not text:
+        return text
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = text.replace("\f", "\n\n").replace("\x0c", "\n\n")
+    text = "\n".join(line.rstrip() for line in text.split("\n"))
+    text = _EXCESS_BLANK_LINES.sub("\n\n", text)
+    return text.strip("\n")
+
+
 def extract_text_from_mime(raw_bytes: bytes, mime_id: int, state: str) -> str:
     """Route raw document bytes to the extractor registered for the given MIME id."""
     handler = _MIME_HANDLERS.get(mime_id)
     if handler is None:
         return "[Unsupported MIME type]"
     try:
-        return handler(raw_bytes, state)
+        extracted = handler(raw_bytes, state)
     except Exception as exc:
         # Return an explicit marker so batch runs continue and failures stay traceable.
         return f"[MIME extraction error: {exc}]"
+    # Leave "[...unavailable...]" markers untouched; only clean real content.
+    if extracted.startswith(_MARKER_PREFIX):
+        return extracted
+    # Format/state-aware structural cleanup, then a final whitespace tidy.
+    return normalize_extracted_text(clean_document(extracted, mime_id, state=state))
 
 
 def _resolve_text_payload(payload: Dict[str, Any]) -> Dict[str, Any]:

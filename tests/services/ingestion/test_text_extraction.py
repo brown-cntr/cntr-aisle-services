@@ -41,6 +41,23 @@ class TestSelectLatestTextEntry:
         assert te.select_latest_text_entry(entries)["doc_id"] == 7
 
 
+class TestNormalizeExtractedText:
+    def test_normalizes_line_endings(self):
+        assert te.normalize_extracted_text("a\r\nb\r\nc") == "a\nb\nc"
+
+    def test_collapses_excess_blank_lines(self):
+        assert te.normalize_extracted_text("a\n\n\n\n\nb") == "a\n\nb"
+
+    def test_form_feed_becomes_blank_line(self):
+        assert te.normalize_extracted_text("page1\fpage2") == "page1\n\npage2"
+
+    def test_strips_trailing_whitespace_and_edges(self):
+        assert te.normalize_extracted_text("  \n\nline   \nother\t\n\n  ") == "line\nother"
+
+    def test_empty_passthrough(self):
+        assert te.normalize_extracted_text("") == ""
+
+
 class TestResolveTextPayload:
     def test_bare_text_object(self):
         payload = {"doc": "abc", "mime_id": 1}
