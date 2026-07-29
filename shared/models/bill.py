@@ -10,6 +10,13 @@ class BillBody(str, Enum):
     SENATE = "senate"
     ASSEMBLY = "assembly"
 
+class BillSource(str, Enum):
+    """Provenance of a bill record after OpenStates/LegiScan reconciliation."""
+    LEGISCAN = "legiscan"
+    OPENSTATES = "openstates"
+    BOTH = "both"
+    MODEL = "model"
+
 class Bill(BaseModel):
     """Legislative bill data model"""
     id: Optional[UUID] = None
@@ -25,6 +32,10 @@ class Bill(BaseModel):
     legiscan_id: Optional[int] = None
     openstates_id: Optional[str] = None
     openstates_url: Optional[str] = None
+    source: Optional[str] = Field(
+        default=None,
+        description="Record provenance after reconciliation: legiscan | openstates | both | model",
+    )
     version_date: Optional[date] = None
     bill_status: Optional[str] = None
     change_hash: Optional[str] = None
