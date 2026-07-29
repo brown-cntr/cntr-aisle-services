@@ -25,6 +25,30 @@ class TestStripLineNumberGutters:
         assert "\n2\n" not in "\n" + out + "\n"
 
 
+class TestStripPageMarkers:
+    def test_removes_dash_wrapped_footer_on_short_line(self):
+        text = "body text here\n**HB0110E** **-1-** **SCS CSHB 110**\nmore body"
+        out = dc.strip_page_markers(text)
+        assert "HB0110E" not in out
+        assert "body text here" in out and "more body" in out
+
+    def test_removes_page_of_footer_even_varying(self):
+        text = "alpha\nPage 5 of 12\nbeta\nPage 6 of 12\ngamma\nPage of 12"
+        out = dc.strip_page_markers(text)
+        assert "Page" not in out
+        assert "alpha" in out and "beta" in out and "gamma" in out
+
+    def test_removes_bare_page_numbers(self):
+        assert dc.strip_page_markers("real\n2\n- 3 -\nmore") == "real\nmore"
+
+    def test_preserves_statutory_citation_in_long_line(self):
+        line = (
+            "SECTION 3. In Colorado Revised Statutes, add 26-1-119.5 as follows, "
+            "concerning the consolidated administration of public assistance programs."
+        )
+        assert dc.strip_page_markers(line) == line
+
+
 class TestStripInlineGutters:
     def test_removes_sequential_inline_numbers(self):
         # A running counter 1..12 embedded mid-line (needs >= 10 tokens to trigger).

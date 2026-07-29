@@ -13,6 +13,14 @@ from typing import List, Optional
 # PDF and legacy office formats carry layout furniture; HTML (1) / XML do not.
 _LAYOUT_FURNITURE_MIME_IDS = frozenset({2, 3, 4, 5})
 
+# A line that is only a (optionally dash/asterisk-wrapped) page number.
+_PAGE_NUMBER_LINE = re.compile(r"^[\s*_-]*\d{1,4}[\s*_-]*$")
+# A "Page N of M" footer (also "Page of M" after inline-gutter removal).
+_PAGE_OF_LINE = re.compile(r"(?i)^\**\s*page\s*(\d{1,4}\s+)?of\s+\d{1,4}\s*\**$")
+# A dash-wrapped page number inside a running footer ("**-1-**", "- 12 -").
+_EMBEDDED_PAGE_NUMBER = re.compile(r"[-–]\s*\d{1,4}\s*[-–]")
+# Longest a line can be and still count as a header/footer (not statutory text).
+_FOOTER_MAX_LEN = 60
 # Revert a step that removes more than this fraction of non-whitespace chars.
 _MAX_SAFE_REMOVAL = 0.40
 # A leading gutter line: optional markdown prefix, small integer, then content.
@@ -47,6 +55,27 @@ def strip_line_number_gutters(text: str) -> str:
         elif not _BARE_SMALL_INT.match(line.strip()):  # drop a wrapped gutter number
             cleaned.append(line)
     return "\n".join(cleaned)
+
+
+def strip_page_markers(text: str) -> str:
+    """Drop page numbers and "Page N of M" / dash-wrapped footers by shape.
+
+    Pattern-verified (never statutory text), so this runs unguarded and cleans
+    even short bills. The dash-wrapped rule is short-line only, so a long citation
+    like "26-1-119.5" is kept.
+    """
+    kept: List[str] = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            kept.append(line)
+        elif _PAGE_NUMBER_LINE.match(stripped) or _PAGE_OF_LINE.match(stripped):
+            continue
+        elif len(stripped) <= _FOOTER_MAX_LEN and _EMBEDDED_PAGE_NUMBER.search(stripped):
+            continue
+        else:
+            kept.append(line)
+    return "\n".join(kept)
 
 
 def dehyphenate(text: str) -> str:
@@ -105,13 +134,14 @@ def _guard(original: str, candidate: str) -> str:
 def clean_document(text: str, mime_id: int, state: Optional[str] = None) -> str:
     """Clean extracted text for its source format and state.
 
-    PDF-family formats get gutter removal (leading + inline); HTML/XML get only
-    de-hyphenation, preserving the per-state HTML normalization in
-    ``text_normalization``.
+    PDF-family formats get gutter (leading + inline) and page-marker removal;
+    HTML/XML get only de-hyphenation, preserving the per-state HTML normalization
+    in ``text_normalization``.
     """
     if not text:
         return text
     if mime_id in _LAYOUT_FURNITURE_MIME_IDS:
         text = _guard(text, strip_line_number_gutters(text))
         text = _guard(text, strip_inline_gutters(text))
+        text = strip_page_markers(text)  # pattern-verified -> unguarded
     return dehyphenate(text)
