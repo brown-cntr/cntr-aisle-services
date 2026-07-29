@@ -184,6 +184,17 @@ alter table bills add column if not exists full_text text;
 alter table bills add column if not exists source   text;
 ```
 
+## OpenStates Reconciliation
+
+`reconciliation.py` reconciles OpenStates and LegiScan records that describe the same bill (stdlib only, no pandas/fuzzywuzzy):
+
+- `openstates_parser.parse_openstates_bill()` maps an OpenStates v3 bill into the shared `Bill` model, alongside `parser.parse_bill_data` for LegiScan.
+- `reconciliation.reconcile_bills(legiscan_bills, openstates_bills)` deduplicates the two sources into one `source`-labeled list: matched pairs merge into one `Bill` carrying both `legiscan_id` and `openstates_id` (`source="both"`); unmatched records are labeled `legiscan` or `openstates`.
+- Matching normalizes identifier quirks (e.g. `HR 1234` ↔ `HR0001234`), builds a `number_state_date` key, aligns dates within ±3 days, and compares title/summary with difflib.
+- `reconciliation.mark_as_model_bill()` tags model legislation (`source="model"`).
+
+`parse_openstates_bill` accepts OpenStates bill dicts from any source (bulk download or API); a live OpenStates fetch client is not yet wired.
+
 ## Full Text Extraction
 
 With `--full-text`, ingestion also pulls each bill's actual document text:
