@@ -203,7 +203,7 @@ With `--full-text`, ingestion also pulls each bill's actual document text:
 2. Fetch it via `getBillText` (one extra API call per bill).
 3. Decode by MIME type into plain text and store in `Bill.full_text`.
 
-Supported MIME types: HTML (with per-state strikethrough normalization), PDF (converted to markdown via `pymupdf4llm`, falling back to the `PyMuPDF` text layer), WordPerfect / legacy `.doc` / RTF (via pandoc). Extraction dependencies (`beautifulsoup4`, `markdownify`, `pymupdf4llm`, `PyMuPDF`, `pypandoc`) are listed in `requirements.txt` and are all optional at runtime: a missing dependency degrades that MIME type to a deterministic `[...]` marker rather than failing ingestion. A single undecodable document yields `full_text = None`; it never aborts the run.
+Supported MIME types: HTML (with per-state strikethrough normalization), PDF (converted to markdown via `pymupdf4llm`, falling back to the `PyMuPDF` text layer), WordPerfect / legacy `.doc` / RTF (via pandoc). Extraction dependencies (`beautifulsoup4`, `markdownify`, `pymupdf4llm`, `PyMuPDF`, `pypandoc`) live in `services/ingestion/requirements.txt`, not the repo-root one, and are all optional at runtime: a missing dependency degrades that MIME type to a deterministic `[...]` marker rather than failing ingestion. A single undecodable document yields `full_text = None`; it never aborts the run.
 
 Because it adds one API call per bill, `--full-text` is off by default to stay within LegiScan quota; enable it when you need the text (e.g. for downstream clause analysis).
 
