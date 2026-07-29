@@ -78,6 +78,28 @@ class TestSelectLatestTextEntry:
         assert te.select_latest_text_entry(entries)["doc_id"] == 1
 
 
+class TestEnumerateTextVersions:
+    def test_one_doc_per_version_newest_first_html_preferred(self):
+        entries = [
+            {"doc_id": 1, "date": "2024-01-01", "mime_id": 2},  # Introduced PDF
+            {"doc_id": 2, "date": "2024-01-01", "mime_id": 1},  # Introduced HTML
+            {"doc_id": 3, "date": "2024-06-01", "mime_id": 2},  # Enrolled PDF
+        ]
+        versions = te.enumerate_text_versions(entries)
+        assert [v["doc_id"] for v in versions] == [3, 2]
+
+    def test_latest_matches_select_latest_text_entry(self):
+        entries = [
+            {"doc_id": 1, "date": "2024-01-01", "mime_id": 1},
+            {"doc_id": 3, "date": "2024-06-01", "mime_id": 2},
+        ]
+        versions = te.enumerate_text_versions(entries)
+        assert versions[0]["doc_id"] == te.select_latest_text_entry(entries)["doc_id"]
+
+    def test_empty_returns_empty_list(self):
+        assert te.enumerate_text_versions([]) == []
+
+
 class TestNormalizeExtractedText:
     def test_normalizes_line_endings(self):
         assert te.normalize_extracted_text("a\r\nb\r\nc") == "a\nb\nc"

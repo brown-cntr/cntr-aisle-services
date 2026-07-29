@@ -258,12 +258,36 @@ def select_latest_text_entry(entries: Iterable[Dict[str, Any]]) -> Optional[Dict
 
 
 def extract_full_text(text_payload: Dict[str, Any], state: str) -> Optional[str]:
-    """Convenience wrapper: return just the extracted text for a getBillText payload.
-
-    Returns ``None`` when the payload cannot be resolved into document bytes.
-    """
+    """Return just the extracted text for a getBillText payload, or ``None``."""
     try:
         _mime_id, text, _link = extract_text_from_api_payload(text_payload, state=state)
     except ValueError:
         return None
     return text or None
+
+
+def enumerate_text_versions(
+    entries: Iterable[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Return one preferred-format document per bill text version, newest first.
+
+    Groups ``texts`` by ``date`` (the version key) and picks the best format per
+    version. This is the primitive for storing every version instead of only the
+    latest; ``select_latest_text_entry`` is the "latest only" shortcut (== result[0]).
+    """
+    valid: List[Dict[str, Any]] = [e for e in entries if isinstance(e, dict)]
+    if not valid:
+        return []
+
+    by_version: Dict[str, List[Dict[str, Any]]] = {}
+    for entry in valid:
+        by_version.setdefault(str(entry.get("date", "")), []).append(entry)
+
+    chosen: List[Dict[str, Any]] = []
+    for _date, docs in by_version.items():
+        best = min(enumerate(docs), key=lambda pair: (_format_rank(pair[1]), pair[0]))[1]
+        chosen.append(best)
+
+    # Newest version first; ties keep insertion order for determinism.
+    chosen.sort(key=lambda e: str(e.get("date", "")), reverse=True)
+    return chosen
