@@ -1,15 +1,16 @@
 """Format-aware cleanup for extracted bill text.
 
 Runs after MIME extraction to strip PDF layout furniture (line-number gutters,
-running headers/footers, page numbers) that structured HTML/XML never carries. Each removal is validated before it fires
-and guarded against over-removal, so statutory text is preserved.
+running headers/footers, page numbers) that structured HTML/XML never carries.
+Each removal is validated before it fires and guarded against over-removal, so
+statutory text is preserved.
 """
 
 from __future__ import annotations
 
 import re
 from collections import Counter
-from typing import List, Optional
+from typing import Callable, Dict, List, Optional
 
 # PDF and legacy office formats carry layout furniture; HTML (1) / XML do not.
 _LAYOUT_FURNITURE_MIME_IDS = frozenset({2, 3, 4, 5})
@@ -171,12 +172,38 @@ def _guard(original: str, candidate: str) -> str:
     return candidate
 
 
+# Per-state cleaners, keyed on 2-letter code, for quirks the generic passes miss.
+# FL: bill-id header ("CS/HB 693 2026") and draft doc-code ("hb693-01-c1") that
+# repeat too few times on short bills to trip the frequency rule.
+_FL_HEADER = re.compile(r"(?i)^(?:CS/)*[HS]B\s*\d+\s+\d{4}$")
+_FL_DOCCODE = re.compile(r"(?i)^[hs][bcjmr]\d+-\d+-[a-z]\d+$")
+
+
+def _clean_fl(text: str) -> str:
+    """Florida: drop the bill-id running header and draft doc-code footer."""
+    return "\n".join(
+        line for line in text.split("\n")
+        if not (_FL_HEADER.match(line.strip()) or _FL_DOCCODE.match(line.strip()))
+    )
+
+
+_STATE_CLEANERS: Dict[str, Callable[[str], str]] = {
+    "FL": _clean_fl,
+}
+
+
+def _apply_state_cleaners(text: str, state: Optional[str]) -> str:
+    """Run the registered cleaner for ``state`` (if any), guarded like the rest."""
+    cleaner = _STATE_CLEANERS.get(state.strip().upper()) if state else None
+    return _guard(text, cleaner(text)) if cleaner else text
+
+
 def clean_document(text: str, mime_id: int, state: Optional[str] = None) -> str:
     """Clean extracted text for its source format and state.
 
     PDF-family formats get gutter (leading + inline), page-marker, and furniture
-    removal; HTML/XML get only de-hyphenation, preserving the per-state HTML
-    normalization in ``text_normalization``.
+    removal; HTML/XML get only ordinal/state fixes and de-hyphenation, preserving
+    the per-state HTML normalization in ``text_normalization``.
     """
     if not text:
         return text
@@ -186,4 +213,5 @@ def clean_document(text: str, mime_id: int, state: Optional[str] = None) -> str:
         text = strip_page_markers(text)  # pattern-verified -> unguarded
         text = _guard(text, remove_repeated_furniture(text))
     text = rejoin_split_ordinals(text)
+    text = _apply_state_cleaners(text, state)
     return dehyphenate(text)

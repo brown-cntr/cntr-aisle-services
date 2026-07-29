@@ -109,6 +109,23 @@ class TestRejoinSplitOrdinals:
         )
 
 
+class TestStateCleaners:
+    def test_florida_removes_header_and_doccode(self):
+        text = "CS/HB 693 2026\nA real provision of the bill.\nhb693-01-c1"
+        out = dc.clean_document(text, mime_id=2, state="FL")
+        assert "CS/HB 693 2026" not in out and "hb693-01-c1" not in out
+        assert "A real provision of the bill." in out
+
+    def test_state_cleaner_only_applies_to_that_state(self):
+        text = "CS/HB 693 2026\nA real provision of the bill."
+        # A different state must not run FL's cleaner.
+        assert "CS/HB 693 2026" in dc.clean_document(text, mime_id=2, state="GA")
+
+    def test_unknown_state_is_safe(self):
+        text = "SECTION 1. A provision."
+        assert "A provision." in dc.clean_document(text, mime_id=2, state="ZZ")
+
+
 class TestCleanDocument:
     def test_html_only_dehyphenates(self):
         text = "inter-\nstate commerce\n1 not a gutter here"
