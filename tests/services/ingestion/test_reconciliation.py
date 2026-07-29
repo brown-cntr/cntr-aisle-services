@@ -1,7 +1,8 @@
-"""Unit tests for OpenStates<->LegiScan reconciliation."""
+"""Unit tests for OpenStates<->LegiScan reconciliation and OpenStates parsing."""
 from datetime import date
 
 from services.ingestion.src import reconciliation as rec
+from services.ingestion.src.openstates_parser import parse_openstates_bill
 from shared.models.bill import Bill, BillBody, BillSource
 
 
@@ -150,3 +151,52 @@ class TestMarkModelBill:
     def test_sets_source(self):
         tagged = rec.mark_as_model_bill(_bill(bill_number="SB53"))
         assert tagged.source == BillSource.MODEL.value
+
+
+class TestParseOpenStatesBill:
+    def test_full_mapping(self):
+        os_bill = {
+            "id": "ocd-bill/1234",
+            "identifier": "SB 53",
+            "title": "Frontier AI Safety Act",
+            "session": "2025 Regular Session",
+            "jurisdiction": {
+                "id": "ocd-jurisdiction/country:us/state:ca/government",
+                "name": "California",
+            },
+            "from_organization": {"classification": "upper"},
+            "openstates_url": "https://openstates.org/ca/bills/2025/SB53",
+            "first_action_date": "2025-01-07",
+            "abstracts": [{"abstract": "Regulates frontier AI models."}],
+            "sources": [{"url": "https://leginfo.ca.gov/SB53"}],
+        }
+        bill = parse_openstates_bill(os_bill)
+        assert bill.openstates_id == "ocd-bill/1234"
+        assert bill.bill_number == "SB 53"
+        assert bill.state == "CA"
+        assert bill.year == 2025
+        assert bill.body == BillBody.SENATE
+        assert bill.version_date == date(2025, 1, 7)
+        assert bill.summary == "Regulates frontier AI models."
+        assert bill.url == "https://leginfo.ca.gov/SB53"
+        assert bill.source == BillSource.OPENSTATES.value
+        assert bill.external_id == "CA SB 53 2025-01-07"
+
+    def test_minimal_bill_does_not_crash(self):
+        bill = parse_openstates_bill({"id": "ocd-bill/x", "identifier": "HB1"})
+        assert bill.openstates_id == "ocd-bill/x"
+        assert bill.bill_number == "HB1"
+        assert bill.source == BillSource.OPENSTATES.value
+        assert bill.version_date is None
+
+    def test_parsed_openstates_reconciles_with_legiscan(self):
+        os_bill = parse_openstates_bill({
+            "id": "ocd-bill/9",
+            "identifier": "HR 1234",
+            "title": "AI Act",
+            "jurisdiction": {"id": "ocd-jurisdiction/country:us/state:il/government"},
+            "first_action_date": "2025-02-05",
+        })
+        legi = _bill(state="IL", bill_number="HR0001234", title="AI Act",
+                     legiscan_id=7, version_date=date(2025, 2, 5))
+        assert rec.is_same_bill(legi, os_bill) is True
