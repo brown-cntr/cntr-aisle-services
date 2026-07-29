@@ -2,7 +2,7 @@
 from datetime import date
 
 from services.ingestion.src import reconciliation as rec
-from shared.models.bill import Bill, BillBody
+from shared.models.bill import Bill, BillBody, BillSource
 
 
 def _bill(**kw) -> Bill:
@@ -82,3 +82,65 @@ class TestIsSameBill:
         os = _bill(bill_number="S 53", title="Frontier AI Safety Act",
                    version_date=date(2025, 6, 1))
         assert rec.is_same_bill(legi, os) is True
+
+
+class TestReconcilePair:
+    def test_merges_openstates_ids_and_fills_gaps(self):
+        legi = _bill(bill_number="SB53", legiscan_id=111, summary=None, url=None)
+        os = _bill(bill_number="S 53", openstates_id="ocd-bill/abc",
+                   openstates_url="https://openstates.org/ca/bills/sb53",
+                   summary="An AI bill", url="https://leginfo.ca.gov/sb53")
+        merged = rec.reconcile_pair(legi, os)
+        assert merged.legiscan_id == 111
+        assert merged.openstates_id == "ocd-bill/abc"
+        assert merged.openstates_url == "https://openstates.org/ca/bills/sb53"
+        assert merged.summary == "An AI bill"  # filled from OpenStates
+        assert merged.url == "https://leginfo.ca.gov/sb53"
+        assert merged.source == BillSource.BOTH.value
+
+    def test_legiscan_fields_win(self):
+        legi = _bill(bill_number="SB53", summary="Legi summary")
+        os = _bill(bill_number="S 53", summary="OS summary")
+        merged = rec.reconcile_pair(legi, os)
+        assert merged.summary == "Legi summary"
+
+
+class TestReconcileBills:
+    def test_matches_labels_and_stats(self):
+        legi_match = _bill(bill_number="SB53", legiscan_id=1,
+                           version_date=date(2025, 1, 7))
+        legi_only = _bill(bill_number="AB100", legiscan_id=2, state="CA")
+        os_match = _bill(bill_number="S 53", openstates_id="os-1",
+                         version_date=date(2025, 1, 8))
+        os_only = _bill(bill_number="HR 900", openstates_id="os-2", state="CA")
+
+        merged, stats = rec.reconcile_bills(
+            [legi_match, legi_only], [os_match, os_only]
+        )
+
+        by_source: dict[str, list[Bill]] = {}
+        for b in merged:
+            by_source.setdefault(b.source, []).append(b)
+
+        assert stats == {
+            "legiscan_total": 2,
+            "openstates_total": 2,
+            "matched": 1,
+            "legiscan_only": 1,
+            "openstates_only": 1,
+            "total": 3,
+        }
+        assert len(by_source[BillSource.BOTH.value]) == 1
+        assert by_source[BillSource.BOTH.value][0].legiscan_id == 1
+        assert by_source[BillSource.BOTH.value][0].openstates_id == "os-1"
+        assert len(by_source[BillSource.LEGISCAN.value]) == 1
+        assert len(by_source[BillSource.OPENSTATES.value]) == 1
+
+    def test_one_legiscan_matches_only_one_openstates(self):
+        # Two OpenStates rows with same number should not both claim one LegiScan bill.
+        legi = _bill(bill_number="SB53", legiscan_id=1, version_date=date(2025, 1, 7))
+        os_a = _bill(bill_number="S 53", openstates_id="a", version_date=date(2025, 1, 7))
+        os_b = _bill(bill_number="S 53", openstates_id="b", version_date=date(2025, 1, 7))
+        merged, stats = rec.reconcile_bills([legi], [os_a, os_b])
+        assert stats["matched"] == 1
+        assert stats["openstates_only"] == 1

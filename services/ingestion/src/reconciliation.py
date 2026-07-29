@@ -12,7 +12,7 @@ from datetime import date, datetime
 from difflib import SequenceMatcher
 from typing import Dict, List, Optional, Tuple
 
-from shared.models.bill import Bill
+from shared.models.bill import Bill, BillSource
 
 # (pattern, replacement, is_regex). Order matters: each rule sees prior output.
 _OPEN_ID_REPLACEMENTS: Tuple[Tuple[str, str, bool], ...] = (
@@ -143,3 +143,84 @@ def is_same_bill(
     if dates_within_range(legiscan_bill.version_date, openstates_bill.version_date, days):
         return True
     return match_confidence(legiscan_bill, openstates_bill) >= min_confidence
+
+
+def reconcile_pair(legiscan_bill: Bill, openstates_bill: Bill) -> Bill:
+    """Merge a matched pair; LegiScan wins, OpenStates fills gaps, source=both."""
+    merged = legiscan_bill.model_copy(deep=True)
+    merged.openstates_id = openstates_bill.openstates_id
+    merged.openstates_url = openstates_bill.openstates_url
+    if not merged.summary and openstates_bill.summary:
+        merged.summary = openstates_bill.summary
+    if not merged.url and openstates_bill.url:
+        merged.url = openstates_bill.url
+    merged.source = BillSource.BOTH.value
+    return merged
+
+
+def _match_key(state: str, normalized_number: str) -> Tuple[str, str]:
+    return ((state or "").upper(), normalized_number)
+
+
+def reconcile_bills(
+    legiscan_bills: List[Bill],
+    openstates_bills: List[Bill],
+    *,
+    days: int = 3,
+    min_confidence: float = 60.0,
+) -> Tuple[List[Bill], Dict[str, int]]:
+    """Reconcile two lists of bills into one deduplicated, source-labeled list.
+
+    Matched pairs merge (source="both"); unmatched are labeled "legiscan" or
+    "openstates". Returns ``(merged_bills, stats)``.
+    """
+    # Index by (state, normalized number) to avoid an O(n*m) scan.
+    legi_index: Dict[Tuple[str, str], List[Bill]] = {}
+    for b in legiscan_bills:
+        key = _match_key(b.state, normalize_legiscan_bill_number(b.bill_number))
+        legi_index.setdefault(key, []).append(b)
+
+    merged: List[Bill] = []
+    matched_legi: set[int] = set()  # ids() of LegiScan bills already merged
+    matched_count = 0
+
+    for os_bill in openstates_bills:
+        key = _match_key(os_bill.state, normalize_openstates_identifier(os_bill.bill_number))
+        candidates = [
+            b for b in legi_index.get(key, []) if id(b) not in matched_legi
+        ]
+
+        best: Optional[Bill] = None
+        best_conf = -1.0
+        for cand in candidates:
+            if not is_same_bill(cand, os_bill, days=days, min_confidence=min_confidence):
+                continue
+            conf = match_confidence(cand, os_bill)
+            if conf > best_conf:
+                best, best_conf = cand, conf
+
+        if best is not None:
+            matched_legi.add(id(best))
+            merged.append(reconcile_pair(best, os_bill))
+            matched_count += 1
+        else:
+            os_only = os_bill.model_copy(deep=True)
+            os_only.source = BillSource.OPENSTATES.value
+            merged.append(os_only)
+
+    # Remaining LegiScan bills that never matched.
+    for b in legiscan_bills:
+        if id(b) not in matched_legi:
+            legi_only = b.model_copy(deep=True)
+            legi_only.source = BillSource.LEGISCAN.value
+            merged.append(legi_only)
+
+    stats = {
+        "legiscan_total": len(legiscan_bills),
+        "openstates_total": len(openstates_bills),
+        "matched": matched_count,
+        "legiscan_only": len(legiscan_bills) - matched_count,
+        "openstates_only": len(openstates_bills) - matched_count,
+        "total": len(merged),
+    }
+    return merged, stats
