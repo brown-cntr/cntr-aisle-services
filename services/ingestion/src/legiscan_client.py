@@ -9,6 +9,7 @@ from shared.models.bill import Bill
 from shared.utils.config import get_settings
 
 from .parser import parse_bill_data
+from .query_config import get_ai_search_query
 from .text_extraction import (
     extract_text_from_api_payload,
     select_latest_text_entry,
@@ -21,27 +22,12 @@ class LegiScanClient:
     """Client for interacting with LegiScan API"""
     
     MAX_RETRIES = 3
-    
-    AI_SEARCH_QUERY = (
-        "(digital NEAR replica) OR (computer-generated) OR (digital NEAR forger) OR "
-        "(artificial NEAR intelligence) OR (automated NEAR decision NEAR making) OR "
-        "(automatic NEAR decision NEAR making) OR (decision NEAR making NEAR tool) OR "
-        "(automated NEAR decision NEAR tool) OR (automatic NEAR decision NEAR tool) OR "
-        "(automated NEAR decision NEAR system) OR (automatic NEAR decision NEAR system) OR "
-        "(automated NEAR final NEAR decision) OR (automatic NEAR final NEAR decision) OR "
-        "(face NEAR recog) OR (facial NEAR recog) OR (voice NEAR recog) OR "
-        "(iris NEAR recog) OR (gait NEAR recog) OR (genAI) OR (gen-AI) OR "
-        "(generative NEAR AI) OR (generative NEAR tech) OR (generative NEAR model) OR "
-        "(generative NEAR artificial) OR (machine NEAR learning) OR (deep NEAR learning) OR "
-        "(chat NEAR bot) OR (virtual NEAR assistant) OR (ChatGPT) OR (Chat-GPT) OR "
-        "(language NEAR model) OR (AI NEAR task NEAR force) OR (AI NEAR advis) OR "
-        "(AI NEAR audit) OR (AI NEAR generate) OR (AI NEAR snoop) OR (deep NEAR fake) OR "
-        "(synthetic NEAR media) OR (digital NEAR assistant) OR (natural NEAR language NEAR process) OR "
-        "(computer NEAR vision) OR (frontier NEAR model) OR (software NEAR agent) OR "
-        "(embodied NEAR robot) OR (foundation NEAR model) OR (LLM) OR (LLMs) OR "
-        "(Information NEAR Technology NEAR Act)"
-    )
-    
+
+    # Assembled from services/ingestion/config/ai_search_query.yaml at import time
+    # (falls back to a built-in default if the config is missing/unreadable). Edit
+    # the YAML to tune coverage; do not hardcode the query here.
+    AI_SEARCH_QUERY = get_ai_search_query()
+
     def __init__(self, api_key: Optional[str] = None):
         """Initialize LegiScan client"""
         settings = get_settings()
