@@ -15,6 +15,8 @@ from collections.abc import Callable
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .document_cleaning import clean_document
+# Re-exported so callers can segment extracted text without a second import.
+from .section_segmentation import Section, segment_sections  # noqa: F401
 
 try:
     from bs4 import BeautifulSoup  # type: ignore
