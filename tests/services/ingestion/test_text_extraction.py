@@ -87,11 +87,22 @@ class TestExtractTextFromApiPayload:
         assert "~~old~~" in text
         assert link == "http://x"
 
-    def test_pdf_without_pymupdf_returns_marker(self):
-        # fitz is optional; in this env it is absent, so PDF yields a marker (no raise).
+    def test_pdf_without_pymupdf_returns_marker(self, monkeypatch):
+        # The PDF extractors are optional. Force them to look absent so we exercise
+        # the graceful "[PDF extraction unavailable]" marker deterministically,
+        # regardless of whether pymupdf4llm/PyMuPDF happen to be installed here.
+        monkeypatch.setattr(te, "pymupdf4llm", None)
+        monkeypatch.setattr(te, "fitz", None)
         payload = {"text": {"doc": _b64("%PDF-1.4 fake"), "mime_id": 2}}
         _mime_id, text, _link = te.extract_text_from_api_payload(payload, state="US")
         assert text.startswith("[") and "PDF" in text
+
+    def test_malformed_pdf_degrades_to_marker(self):
+        # With the extractor installed, an undecodable PDF must still degrade to a
+        # bracketed marker rather than raising.
+        payload = {"text": {"doc": _b64("%PDF-1.4 fake"), "mime_id": 2}}
+        _mime_id, text, _link = te.extract_text_from_api_payload(payload, state="US")
+        assert text.startswith("[")
 
     def test_unsupported_mime_returns_marker(self):
         payload = {"text": {"doc": _b64("data"), "mime_id": 99}}
