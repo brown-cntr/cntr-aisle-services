@@ -1,0 +1,11 @@
+# Ingestion service dependencies
+# Shared deps (pydantic, supabase, etc.) come from the repo-root requirements.txt / cntr-shared package.
+
+# Full-text extraction (services/ingestion/src/text_extraction.py).
+# All are optional at runtime: missing ones degrade to deterministic markers,
+# but install them to actually populate Bill.full_text from LegiScan documents.
+beautifulsoup4>=4.12.0   # HTML bill text (required for the common HTML MIME type)
+markdownify>=0.11.0      # cleaner HTML->markdown than the bs4 get_text fallback
+pymupdf4llm>=0.0.17      # PDF -> markdown (preferred PDF extractor)
+PyMuPDF>=1.24.0          # PDF text layer fallback (fitz)
+pypandoc>=1.13           # WordPerfect / legacy .doc / RTF via pandoc

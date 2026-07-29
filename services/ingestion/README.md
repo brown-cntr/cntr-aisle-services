@@ -61,6 +61,10 @@ python -m services.ingestion.src --legiscan-url "https://legiscan.com/CA/bill/12
 # Ingest a single bill by LegiScan numeric bill_id
 python -m services.ingestion.src --legiscan-id 123456
 
+# Also fetch + store each bill's full document text (one extra getBillText call per bill)
+python -m services.ingestion.src --full-text
+python -m services.ingestion.src --legiscan-id 123456 --full-text
+
 # Ingest a single bill from a bill-number URL (resolved via LegiScan search)
 python -m services.ingestion.src --legiscan-url "https://legiscan.com/IL/bill/SB3890/2025"
 ```
@@ -168,6 +172,40 @@ LegiScan → Supabase Schema:
 - `state_link` or `url` → `url`; LegiScan `url` → `legiscan_url`
 - `status_date` (or first history date) → `version_date`
 - `bill_id` → `legiscan_id`
+- latest `texts[]` document, fetched via getBillText and decoded by MIME type → `full_text` (only with `--full-text`)
+- reconciliation provenance (`legiscan` / `openstates` / `both` / `model`) → `source`
+
+### New database columns
+
+`full_text` and `source` are written only when populated (the row builder uses `exclude_none=True`), so default LegiScan-only ingestion is unaffected. To persist them, the Supabase `bills` table needs matching nullable text columns:
+
+```sql
+alter table bills add column if not exists full_text text;
+alter table bills add column if not exists source   text;
+```
+
+## OpenStates Reconciliation
+
+`reconciliation.py` reconciles OpenStates and LegiScan records that describe the same bill (stdlib only, no pandas/fuzzywuzzy):
+
+- `openstates_parser.parse_openstates_bill()` maps an OpenStates v3 bill into the shared `Bill` model, alongside `parser.parse_bill_data` for LegiScan.
+- `reconciliation.reconcile_bills(legiscan_bills, openstates_bills)` deduplicates the two sources into one `source`-labeled list: matched pairs merge into one `Bill` carrying both `legiscan_id` and `openstates_id` (`source="both"`); unmatched records are labeled `legiscan` or `openstates`.
+- Matching normalizes identifier quirks (e.g. `HR 1234` ↔ `HR0001234`), builds a `number_state_date` key, aligns dates within ±3 days, and compares title/summary with difflib.
+- `reconciliation.mark_as_model_bill()` tags model legislation (`source="model"`).
+
+`parse_openstates_bill` accepts OpenStates bill dicts from any source (bulk download or API); a live OpenStates fetch client is not yet wired.
+
+## Full Text Extraction
+
+With `--full-text`, ingestion also pulls each bill's actual document text:
+
+1. Select the most recent entry in the bill's `texts[]` list (by date).
+2. Fetch it via `getBillText` (one extra API call per bill).
+3. Decode by MIME type into plain text and store in `Bill.full_text`.
+
+Supported MIME types: HTML (with per-state strikethrough normalization), PDF (converted to markdown via `pymupdf4llm`, falling back to the `PyMuPDF` text layer), WordPerfect / legacy `.doc` / RTF (via pandoc). Extraction dependencies (`beautifulsoup4`, `markdownify`, `pymupdf4llm`, `PyMuPDF`, `pypandoc`) live in `services/ingestion/requirements.txt`, not the repo-root one, and are all optional at runtime: a missing dependency degrades that MIME type to a deterministic `[...]` marker rather than failing ingestion. A single undecodable document yields `full_text = None`; it never aborts the run.
+
+Because it adds one API call per bill, `--full-text` is off by default to stay within LegiScan quota; enable it when you need the text (e.g. for downstream clause analysis).
 
 ## Credit
 Much of the filtering query and LegiScan API knowledge provided by [Timothy Fong](https://github.com/Timfon)

@@ -1,0 +1,80 @@
+# AI-bill search query for LegiScan getSearch. Editable source of truth.
+#
+# To change coverage: edit `groups`, bump `version`, add a `changelog` entry.
+# The loader wraps each group in parentheses and OR-joins them, so write each
+# entry as the inside of one clause (no parentheses, no "OR").
+# LegiScan syntax: NEAR = adjacency ("A NEAR B"); a trailing stem ("recog") is a
+# wildcard (recognition/recognize/...).
+
+version: 1
+updated: 2026-07-14
+description: >-
+  Boolean keyword query used against LegiScan getSearch to surface
+  AI-related state and federal legislation.
+
+groups:
+  - digital NEAR replica
+  - computer-generated
+  - digital NEAR forger
+  - artificial NEAR intelligence
+  - automated NEAR decision NEAR making
+  - automatic NEAR decision NEAR making
+  - decision NEAR making NEAR tool
+  - automated NEAR decision NEAR tool
+  - automatic NEAR decision NEAR tool
+  - automated NEAR decision NEAR system
+  - automatic NEAR decision NEAR system
+  - automated NEAR final NEAR decision
+  - automatic NEAR final NEAR decision
+  - face NEAR recog
+  - facial NEAR recog
+  - voice NEAR recog
+  - iris NEAR recog
+  - gait NEAR recog
+  - genAI
+  - gen-AI
+  - generative NEAR AI
+  - generative NEAR tech
+  - generative NEAR model
+  - generative NEAR artificial
+  - machine NEAR learning
+  - deep NEAR learning
+  - chat NEAR bot
+  - virtual NEAR assistant
+  - ChatGPT
+  - Chat-GPT
+  - language NEAR model
+  - AI NEAR task NEAR force
+  - AI NEAR advis
+  - AI NEAR audit
+  - AI NEAR generate
+  - AI NEAR snoop
+  - deep NEAR fake
+  - synthetic NEAR media
+  - digital NEAR assistant
+  - natural NEAR language NEAR process
+  - computer NEAR vision
+  - frontier NEAR model
+  - software NEAR agent
+  - embodied NEAR robot
+  - foundation NEAR model
+  - LLM
+  - LLMs
+  - Information NEAR Technology NEAR Act
+
+# Staging area for proposed keywords. Anyone can append here to SUGGEST a new
+# term without changing ingestion. To activate a suggestion, move it up into
+# `groups`, bump `version`, and add a changelog entry. Entries here are ignored
+# by the loader, so they never affect the live query.
+suggested_groups: []
+  # - agentic NEAR AI
+  # - AI NEAR chatbot
+  # - large NEAR language NEAR model
+
+changelog:
+  - version: 1
+    date: 2026-07-14
+    note: >-
+      Initial extraction of AI_SEARCH_QUERY out of legiscan_client.py into this
+      versioned config. Terms unchanged from the previous hardcoded string, so
+      ingestion behavior is identical; only the storage location changed.
