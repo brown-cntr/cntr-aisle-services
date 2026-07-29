@@ -102,6 +102,13 @@ class TestStripInlineGutters:
         assert dc.strip_inline_gutters("a 1 b 2 c") == "a 1 b 2 c"
 
 
+class TestRejoinSplitOrdinals:
+    def test_rejoins_ordinals(self):
+        assert dc.rejoin_split_ordinals("Scott of the 76 [th], Bell of the 63 [rd]") == (
+            "Scott of the 76th, Bell of the 63rd"
+        )
+
+
 class TestCleanDocument:
     def test_html_only_dehyphenates(self):
         text = "inter-\nstate commerce\n1 not a gutter here"

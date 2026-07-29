@@ -150,6 +150,15 @@ def strip_inline_gutters(text: str) -> str:
     return "\n".join(_MULTISPACE.sub(" ", line) for line in joined.split("\n"))
 
 
+# markdownify splits superscript ordinals ("76<sup>th</sup>" -> "76 [th]").
+_SPLIT_ORDINAL = re.compile(r"(\d+) \[(st|nd|rd|th)\]")
+
+
+def rejoin_split_ordinals(text: str) -> str:
+    """Rejoin ordinals split by markdownify: ``76 [th]`` -> ``76th``."""
+    return _SPLIT_ORDINAL.sub(r"\1\2", text)
+
+
 def _nonspace_len(text: str) -> int:
     return len(re.sub(r"\s+", "", text))
 
@@ -176,4 +185,5 @@ def clean_document(text: str, mime_id: int, state: Optional[str] = None) -> str:
         text = _guard(text, strip_inline_gutters(text))
         text = strip_page_markers(text)  # pattern-verified -> unguarded
         text = _guard(text, remove_repeated_furniture(text))
+    text = rejoin_split_ordinals(text)
     return dehyphenate(text)
