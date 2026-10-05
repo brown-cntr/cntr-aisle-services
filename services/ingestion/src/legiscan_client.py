@@ -28,6 +28,7 @@ class LegiScanClient:
 
     MAX_RETRIES = 3
     MIN_REQUEST_INTERVAL = 0.6
+    USER_AGENT = "cntr-aisle-ingestion/1.0 (+https://github.com/brown-cntr/cntr-aisle-services)"
 
     AI_SEARCH_QUERY = (
         "(digital NEAR replica) OR (computer-generated) OR (digital NEAR forger) OR "
@@ -94,7 +95,8 @@ class LegiScanClient:
         try:
             logger.debug(f"Making API request: {operation} with params: {params}")
             self.request_count += 1
-            response = urllib.request.urlopen(full_url, timeout=30)
+            request = urllib.request.Request(full_url, headers={"User-Agent": self.USER_AGENT})
+            response = urllib.request.urlopen(request, timeout=30)
             data = json.loads(response.read())
 
             # Check for API errors
@@ -115,8 +117,9 @@ class LegiScanClient:
                 logger.warning(f"Rate limit hit, waiting {wait}s (retry {_retries + 1}/{self.MAX_RETRIES})...")
                 time.sleep(wait)
                 return self._make_request(operation, _retries=_retries + 1, **params)
-            logger.error(f"HTTP Error {e.code}: {e.reason}")
-            raise Exception(f"HTTP Error {e.code}: {e.reason}")
+            body = e.read(200).decode(errors="replace").strip() if e.fp else ""
+            logger.error(f"HTTP Error {e.code}: {e.reason} {body}")
+            raise Exception(f"HTTP Error {e.code}: {e.reason} {body}")
         except json.JSONDecodeError as e:
             logger.error(f"JSON decode error: {e}")
             raise Exception(f"JSON decode error: {e}")

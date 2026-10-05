@@ -172,6 +172,14 @@ class TestLegiScanClient:
             client._make_request("getBill", id=2)
             assert mock_sleep.called
 
+    @patch("urllib.request.urlopen")
+    def test_make_request_sends_custom_user_agent(self, mock_urlopen, client, sample_search_response):
+        mock_urlopen.return_value = Mock(read=Mock(return_value=json.dumps(sample_search_response).encode()))
+        client._make_request("getBill", id=1)
+        request = mock_urlopen.call_args[0][0]
+        assert request.get_header("User-agent") == LegiScanClient.USER_AGENT
+        assert "Python-urllib" not in request.get_header("User-agent")
+
     def test_min_request_interval_respects_legiscan_limit(self, client):
         # LegiScan allows ~2 requests/second sustained
         assert client.min_request_interval >= 0.5
