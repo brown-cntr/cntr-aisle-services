@@ -14,12 +14,21 @@ from .parser import parse_bill_data
 
 logger = logging.getLogger(__name__)
 
+_RATE_LIMIT_MESSAGE = re.compile(r"limit|quota|exceed", re.IGNORECASE)
+
+
+class LegiScanRateLimitError(Exception):
+    """Rate limit or monthly query quota exceeded."""
+
+    partial_bills: List[Bill] = []
+
 
 class LegiScanClient:
     """Client for interacting with LegiScan API"""
-    
+
     MAX_RETRIES = 3
-    
+    MIN_REQUEST_INTERVAL = 0.6
+
     AI_SEARCH_QUERY = (
         "(digital NEAR replica) OR (computer-generated) OR (digital NEAR forger) OR "
         "(artificial NEAR intelligence) OR (automated NEAR decision NEAR making) OR "
@@ -53,7 +62,7 @@ class LegiScanClient:
         self.base_url = "https://api.legiscan.com"
         self.request_count = 0
         self.last_request_time = 0
-        self.min_request_interval = 0.1  # 100ms between requests to avoid rate limiting
+        self.min_request_interval = self.MIN_REQUEST_INTERVAL
     
     def _make_request(self, operation: str, _retries: int = 0, **params) -> Dict[str, Any]:
         """
@@ -84,24 +93,24 @@ class LegiScanClient:
         
         try:
             logger.debug(f"Making API request: {operation} with params: {params}")
+            self.request_count += 1
             response = urllib.request.urlopen(full_url, timeout=30)
             data = json.loads(response.read())
-            
-            self.request_count += 1
-            self.last_request_time = time.time()
-            
+
             # Check for API errors
             if data.get("status") != "OK":
                 error_msg = data.get("alert", {}).get("message", "Unknown error")
                 logger.error(f"LegiScan API error: {error_msg}")
+                if _RATE_LIMIT_MESSAGE.search(error_msg):
+                    raise LegiScanRateLimitError(f"LegiScan API error: {error_msg}")
                 raise Exception(f"LegiScan API error: {error_msg}")
-            
+
             return data
-            
+
         except urllib.error.HTTPError as e:
             if e.code == 429:
                 if _retries >= self.MAX_RETRIES:
-                    raise Exception("Rate limit exceeded after max retries")
+                    raise LegiScanRateLimitError("Rate limit exceeded after max retries")
                 wait = 60 * (2 ** _retries)
                 logger.warning(f"Rate limit hit, waiting {wait}s (retry {_retries + 1}/{self.MAX_RETRIES})...")
                 time.sleep(wait)
@@ -114,7 +123,9 @@ class LegiScanClient:
         except Exception as e:
             logger.error(f"Request failed: {e}")
             raise
-    
+        finally:
+            self.last_request_time = time.time()
+
     def search_ai_bills(
         self, 
         min_relevance: int = 0, 
@@ -143,14 +154,25 @@ class LegiScanClient:
         logger.info(f"Searching LegiScan API with {operation}...")
         logger.debug(f"Query: {self.AI_SEARCH_QUERY[:100]}...")
         
-        data = self._make_request(operation, **params)
-        
-        # Extract results from response
-        search_result = data.get("searchresult", {})
-        results = search_result.get("results", [])
-        summary = search_result.get("summary", {})
-        
-        logger.info(f"Found {summary.get('count', 0)} total results")
+        # getSearchRaw returns at most 2000 results per page; fetch every page
+        results: List[Dict] = []
+        seen_bill_ids: Set[Any] = set()
+        page = 1
+        while True:
+            data = self._make_request(operation, page=page, **params)
+            search_result = data.get("searchresult", {})
+            summary = search_result.get("summary", {})
+            for bill in search_result.get("results", []):
+                if bill.get("bill_id") in seen_bill_ids:
+                    continue
+                seen_bill_ids.add(bill.get("bill_id"))
+                results.append(bill)
+            page_total = int(summary.get("page_total") or 1)
+            if page >= page_total:
+                break
+            page += 1
+
+        logger.info(f"Found {summary.get('count', 0)} total results across {page} page(s)")
         logger.debug(f"Relevance range: {summary.get('relevancy', 'N/A')}")
         
         # Filter by minimum relevance score
@@ -252,7 +274,10 @@ class LegiScanClient:
                 # Parse into Bill model
                 bill = parse_bill_data(bill_data)
                 bills.append(bill)
-                
+
+            except LegiScanRateLimitError as e:
+                e.partial_bills = bills
+                raise
             except Exception as e:
                 logger.error(f"Error fetching bill {bill_id}: {e}")
                 continue

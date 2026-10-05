@@ -2,12 +2,15 @@
 
 ## What this job does
 
-Searches LegiScan for AI-related legislation across all US states, fetches full
-bill metadata, and stores new or updated bills in Supabase. Runs daily via
-GitHub Actions.
+A daily GitHub Actions workflow with two jobs, run in order:
 
-**If it stops working**, new bills will not appear in the database until the job
-is fixed and re-run.
+1. **ingest** searches LegiScan for AI-related bills (all states, current year)
+   and inserts bills that are not yet in Supabase.
+2. **sync** checks every LegiScan session in the database for changed bills
+   (by `change_hash`) and re-fetches them to update status, title, etc.
+
+**If it stops working**, new bills and status updates stop appearing until the
+job is fixed and re-run.
 
 ## Where it runs
 
@@ -15,118 +18,108 @@ is fixed and re-run.
 |---|---|
 | Platform | GitHub Actions |
 | Workflow file | `.github/workflows/ingest.yml` |
-| Schedule | Daily at 06:00 UTC |
-| Typical runtime | Under 2 minutes (incremental) |
+| Schedule | Daily at 06:00 UTC; sync starts after ingest finishes, even if ingest failed |
+| Typical runtime | A few minutes per job; ~20 minutes for `--full` or a first load (requests are spaced 0.6s apart) |
 | Actions URL | https://github.com/brown-cntr/cntr-aisle-services/actions/workflows/ingest.yml |
 
 ## Secrets
 
 Stored in GitHub repo Settings > Secrets and variables > Actions:
+`SUPABASE_URL`, `SUPABASE_KEY`, `LEGISCAN_API_KEY`.
 
-- `SUPABASE_URL`
-- `SUPABASE_KEY`
-- `LEGISCAN_API_KEY`
+## LegiScan limits (from 2026-10-01)
+
+- **10,000 queries/month.** Every request counts, including failed requests and `--dry-run`.
+- **~2 requests/second.** The client waits 0.6s between requests.
+- Each run ends with `LegiScan queries used this run: N`. For month-to-date
+  usage, see the API status report at https://legiscan.com/legiscan.
+
+| Operation | Approximate queries |
+|---|---|
+| Daily ingest | 1 per search page (2,000 results/page) + 1 per new bill |
+| Daily sync | 1 per session in the database + 1 per changed bill |
+| `--full` / `--check-existing` | ~2,000 (about 20% of the month) |
 
 ## Normal behavior
 
-Logs should show:
+Ingest logs, in order:
 
-1. "Starting bill ingestion process..."
-2. Search results count
-3. Filtering / skipping existing bills
-4. Fetching full details for new bills
-5. Storage summary (inserted, skipped, updated counts)
+1. `Found N total results across P page(s)`
+2. `Bulk check: X of Y search-result bills already in database`
+3. `Fetching bill ...` for new bills only
+4. `Storage complete: N new, M skipped (already in DB)`
 
-A count of 0 ingested bills is normal if no new legislation has been
-introduced since the last run.
+Sync logs `Checking N session(s) for changes`, a `Session X: N bills tracked,
+M changed` line per session, then `Sync complete: N bill(s) updated`.
+
+Both end with the queries-used line. Zero new or updated bills is normal on
+quiet days.
 
 ## Failure modes
 
-### Job fails (exit code 1)
-
-1. Open the failed run in the Actions UI.
-2. Expand the "Run ingestion" step to see the stack trace.
-3. Identify the category below and follow the steps.
+Open the failed run in the Actions UI and expand **Run ingestion** or
+**Sync existing bills** to see the stack trace.
 
 ### Missing or invalid secrets
 
-- **Symptom**: "SUPABASE_URL environment variable must be set" or similar
-  at startup.
-- **Fix**: Verify all three secrets are present and correct in repo settings.
+- **Symptom**: `ValidationError` with `Field required` for `supabase_url`,
+  `supabase_key`, or `legiscan_api_key` at startup; or a `LegiScan API error`
+  about the key.
+- **Fix**: Check all three secrets in repo settings; rotate the LegiScan key if expired.
 
-### LegiScan API errors
+### LegiScan rate limit or quota
 
-- **Symptom**: "LegiScan API error" or "Rate limit exceeded after max retries".
-- **Likely cause**: Expired/invalid API key, LegiScan outage, or monthly quota
-  (20,000 requests on free tier) exhausted.
-- **Diagnose**: Run locally with `--dry-run --limit 5` to confirm.
-- **Fix**: Rotate key if expired; if quota hit, wait until next month or reduce
-  scope (`--state CA --limit 50`).
+- **Symptom**: `LegiScanRateLimitError` or "Rate limit exceeded after max
+  retries". The run stops; bills fetched before the limit are still stored.
+- **Diagnose**: Check the API status report on the LegiScan account and the
+  queries-used lines from recent runs. Don't spend more queries testing it.
+- **Fix**: If the monthly quota is used up, pause the workflow until next month.
+  If it's the rate limit, make sure nobody else is running the CLI with the same
+  key at the same time.
+
+### Other LegiScan errors
+
+- **Symptom**: `LegiScan API error: ...` or `HTTP Error ...`.
+- **Likely cause**: LegiScan outage or a bad key. Wait and re-run, or rotate the key.
 
 ### Supabase errors
 
-- **Symptom**: "Error inserting ..." or "Error storing bill ...".
-- **Likely cause**: Schema mismatch, revoked key, or Supabase outage.
-- **Diagnose**: Check the Supabase dashboard for the project; run
-  `--dry-run` locally to isolate whether the issue is search/fetch vs storage.
-- **Fix**: Correct schema or key; re-run the workflow.
+- **Write errors** (`Error inserting ...`, `Error storing bill ...`,
+  `Error updating bill ...`) are logged per bill; the job may still pass.
+- **Read errors are only logged as warnings and the job still passes**:
+  `Error bulk-checking legiscan_ids`, `Error fetching distinct session IDs`,
+  `Error fetching change hashes`. Sync can quietly do nothing.
+- **Check**: If several runs in a row show 0 new / 0 updated, or
+  `No sessions found in database`, look for these warnings and check the
+  Supabase dashboard (project status, key, schema).
 
 ## Manual operations
 
-### Trigger a run manually
+- **Trigger a run**: Actions UI > "Daily Ingestion" > "Run workflow" (runs both jobs).
+- **Pause / resume**: Actions UI > "Daily Ingestion" > "..." > "Disable workflow"
+  / "Enable workflow". This pauses both jobs.
 
-Go to the Actions UI > "Daily Ingestion" > "Run workflow" > select `main` >
-click "Run workflow".
-
-### Run locally (dry run, no DB writes)
-
-```bash
-python -m services.ingestion.src --dry-run --limit 50
-```
-
-### Run locally (real writes)
+Run locally from the repo root. Every command spends LegiScan queries,
+including `--dry-run`.
 
 ```bash
-python -m services.ingestion.src
+python -m services.ingestion.src                         # daily ingest
+python -m services.ingestion.src --sync                  # update changed bills
+python -m services.ingestion.src --dry-run --limit 5     # smoke test, no DB writes
+python -m services.ingestion.src --legiscan-id 123456    # one bill
+python -m services.ingestion.src --legiscan-url "https://legiscan.com/IL/bill/SB3890/2025"
 ```
 
-### Run for a specific state
-
-```bash
-python -m services.ingestion.src --state CA
-```
-
-### Backfill bills since a specific date
-
-```bash
-python -m services.ingestion.src --since 2026-01-01
-```
-
-### Full re-ingestion (reprocess all bills)
-
-```bash
-python -m services.ingestion.src --full
-```
-
-This fetches and re-stores all bills, not just new ones. Takes longer and uses
-more API quota.
-
-## Pausing and resuming the job
-
-**To pause**: In the Actions UI, click "Daily Ingestion" > "..." menu >
-"Disable workflow".
-
-**To resume**: Same menu > "Enable workflow". The next scheduled run will
-fire at the normal time.
-
-## Useful CLI flags
+## CLI flags
 
 | Flag | Effect |
 |---|---|
-| `--dry-run` | Search and fetch but do not write to DB |
-| `--limit N` | Only process N bills |
-| `--since DATE` | Only store bills with version_date >= DATE |
-| `--state XX` | Restrict to a single state (e.g. CA, NY) |
-| `--full` | Reprocess all bills (ignore incremental filtering) |
-| `--check-existing` | Also check existing bills for updates |
+| `--sync` | Re-fetch bills whose `change_hash` changed; updates the whole row |
+| `--backfill` | One-time: fill missing `change_hash` / `legiscan_session_id` on existing bills |
+| `--legiscan-id ID` / `--legiscan-url URL` | Ingest a single bill. **Writes to the DB even with `--dry-run`** |
+| `--dry-run` | Search and fetch without DB writes (still spends queries) |
+| `--limit N` | Only fetch N bills |
+| `--state XX` | Restrict to one state (e.g. CA) |
 | `--min-relevance N` | Only include bills with relevance >= N (0-100) |
+| `--since DATE` | Only store fetched bills with `version_date` >= DATE. A filter, not a backfill: the search only covers the current year |
+| `--full` / `--check-existing` | Re-fetch every search result (~2,000 queries). Only refreshes status, `change_hash`, and session; use `--sync` for a full refresh |

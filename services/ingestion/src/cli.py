@@ -229,6 +229,7 @@ def main():
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
+    service = None
     try:
         # Single-bill ingestion path: either --legiscan-url or --legiscan-id
         if args.legiscan_url or args.legiscan_id is not None:
@@ -295,3 +296,8 @@ def main():
     except Exception as e:
         logger.error(f"Ingestion failed: {e}", exc_info=True)
         sys.exit(1)
+    finally:
+        if service is not None:
+            logger.info(
+                f"LegiScan queries used this run: {service.legiscan_client.request_count}"
+            )

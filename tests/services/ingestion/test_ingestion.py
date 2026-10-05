@@ -7,6 +7,7 @@ import pytest
 from unittest.mock import Mock, patch
 
 from services.ingestion.src.ingestion import IngestionService
+from services.ingestion.src.legiscan_client import LegiScanRateLimitError
 from shared.models.bill import Bill, BillBody
 
 
@@ -95,3 +96,63 @@ class TestIngestionService:
         assert count == 1
         call_kw = mock_legiscan.get_bills_from_search_results.call_args[1]
         assert 222 in call_kw.get("existing_legiscan_ids", set())
+
+
+class TestIngestRateLimit:
+    def test_ingest_stores_partial_bills_before_reraising(self):
+        partial = [Bill(external_id="111", title="Bill 111", state="CA", year=2024, bill_number="AB111", body=BillBody.ASSEMBLY)]
+        err = LegiScanRateLimitError("quota exceeded")
+        err.partial_bills = partial
+        legiscan = Mock()
+        legiscan.search_ai_bills.return_value = ([{"bill_id": 111, "relevance": 90}], {"count": 1})
+        legiscan.get_bills_from_search_results.side_effect = err
+        repo = Mock()
+        svc = IngestionService(legiscan_client=legiscan, bills_repository=repo)
+
+        with pytest.raises(LegiScanRateLimitError):
+            svc.ingest_ai_bills(incremental=False)
+        repo.store_bills.assert_called_once_with(partial)
+
+    def test_ingest_dry_run_does_not_store_partial_bills(self):
+        err = LegiScanRateLimitError("quota exceeded")
+        err.partial_bills = [Mock()]
+        legiscan = Mock()
+        legiscan.search_ai_bills.return_value = ([{"bill_id": 111, "relevance": 90}], {"count": 1})
+        legiscan.get_bills_from_search_results.side_effect = err
+        repo = Mock()
+        svc = IngestionService(legiscan_client=legiscan, bills_repository=repo)
+
+        with pytest.raises(LegiScanRateLimitError):
+            svc.ingest_ai_bills(incremental=False, dry_run=True)
+        repo.store_bills.assert_not_called()
+
+
+class TestSyncRateLimit:
+    """Rate-limit/quota errors must stop sync instead of being skipped per bill."""
+
+    def _service(self, legiscan):
+        repo = Mock()
+        repo.get_distinct_session_ids.return_value = [1, 2]
+        repo.get_change_hashes_for_session.return_value = {111: "old", 222: "old"}
+        return IngestionService(legiscan_client=legiscan, bills_repository=repo), repo
+
+    def test_sync_stops_on_rate_limit_error(self):
+        legiscan = Mock()
+        legiscan.get_master_list_raw.return_value = {111: "new", 222: "new"}
+        legiscan.get_bill.side_effect = LegiScanRateLimitError("quota exceeded")
+        svc, repo = self._service(legiscan)
+
+        with pytest.raises(LegiScanRateLimitError):
+            svc.sync_bills()
+        assert legiscan.get_bill.call_count == 1
+        repo.update_bill_by_legiscan_id.assert_not_called()
+
+    def test_sync_skips_bill_on_other_errors(self):
+        legiscan = Mock()
+        legiscan.get_master_list_raw.return_value = {111: "new", 222: "new"}
+        legiscan.get_bill.side_effect = Exception("boom")
+        svc, _ = self._service(legiscan)
+
+        assert svc.sync_bills() == 0
+        # Two changed bills in each of the two sessions, all attempted
+        assert legiscan.get_bill.call_count == 4

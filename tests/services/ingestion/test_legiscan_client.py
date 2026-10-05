@@ -5,7 +5,7 @@ import urllib.error
 import pytest
 from unittest.mock import Mock, patch
 
-from services.ingestion.src.legiscan_client import LegiScanClient
+from services.ingestion.src.legiscan_client import LegiScanClient, LegiScanRateLimitError
 from shared.models.bill import Bill, BillBody
 
 
@@ -171,3 +171,48 @@ class TestLegiScanClient:
             client._make_request("getBill", id=1)
             client._make_request("getBill", id=2)
             assert mock_sleep.called
+
+    def test_min_request_interval_respects_legiscan_limit(self, client):
+        # LegiScan allows ~2 requests/second sustained
+        assert client.min_request_interval >= 0.5
+
+    @patch.object(LegiScanClient, "_make_request")
+    def test_search_ai_bills_fetches_all_pages(self, mock_req, client):
+        def page(n, ids):
+            return {
+                "status": "OK",
+                "searchresult": {
+                    "summary": {"count": 3, "page_total": 2, "page_current": n},
+                    "results": [{"bill_id": i, "relevance": 50} for i in ids],
+                },
+            }
+
+        mock_req.side_effect = [page(1, [1, 2]), page(2, [2, 3])]
+        results, _ = client.search_ai_bills()
+
+        assert [r["bill_id"] for r in results] == [1, 2, 3]
+        assert [c.kwargs["page"] for c in mock_req.call_args_list] == [1, 2]
+
+    @patch("urllib.request.urlopen")
+    def test_make_request_quota_error_raises_rate_limit_error(self, mock_urlopen, client):
+        err = {"status": "ERROR", "alert": {"message": "Monthly query limit exceeded"}}
+        mock_urlopen.return_value = Mock(read=Mock(return_value=json.dumps(err).encode()))
+        with pytest.raises(LegiScanRateLimitError):
+            client._make_request("getBill", id=1)
+
+    @patch("urllib.request.urlopen")
+    def test_make_request_429_exhausted_raises_rate_limit_error(self, mock_urlopen, client):
+        mock_urlopen.side_effect = urllib.error.HTTPError("https://api.legiscan.com/", 429, "Rate Limit", {}, None)
+        with patch("time.sleep"), pytest.raises(LegiScanRateLimitError):
+            client._make_request("getBill", id=1)
+        assert mock_urlopen.call_count == client.MAX_RETRIES + 1
+        assert client.request_count == client.MAX_RETRIES + 1
+
+    @patch.object(LegiScanClient, "get_bill")
+    def test_get_bills_from_search_results_stops_on_rate_limit(self, mock_get_bill, client, sample_bill_data):
+        mock_get_bill.side_effect = [sample_bill_data, LegiScanRateLimitError("quota"), sample_bill_data]
+        results = [{"bill_id": 1, "relevance": 90}, {"bill_id": 2, "relevance": 88}, {"bill_id": 3, "relevance": 85}]
+        with pytest.raises(LegiScanRateLimitError) as exc_info:
+            client.get_bills_from_search_results(results)
+        assert mock_get_bill.call_count == 2
+        assert [b.legiscan_id for b in exc_info.value.partial_bills] == [123456]
