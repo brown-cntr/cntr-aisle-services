@@ -201,6 +201,17 @@ class TestLegiScanClient:
         assert [r["bill_id"] for r in results] == [1, 2, 3]
         assert [c.kwargs["page"] for c in mock_req.call_args_list] == [1, 2]
 
+    def test_search_query_fits_legiscan_limit(self):
+        assert len(LegiScanClient.AI_SEARCH_QUERY.encode()) <= LegiScanClient.MAX_QUERY_BYTES
+
+    @patch("urllib.request.urlopen")
+    def test_query_too_long_error_is_not_rate_limit(self, mock_urlopen, client):
+        err = {"status": "ERROR", "alert": {"message": "Full-text query too long, 1264 bytes of 1024 limit"}}
+        mock_urlopen.return_value = Mock(read=Mock(return_value=json.dumps(err).encode()))
+        with pytest.raises(Exception, match="query too long") as exc_info:
+            client._make_request("getSearchRaw", query="x")
+        assert not isinstance(exc_info.value, LegiScanRateLimitError)
+
     @patch("urllib.request.urlopen")
     def test_make_request_quota_error_raises_rate_limit_error(self, mock_urlopen, client):
         err = {"status": "ERROR", "alert": {"message": "Monthly query limit exceeded"}}

@@ -14,7 +14,9 @@ from .parser import parse_bill_data
 
 logger = logging.getLogger(__name__)
 
-_RATE_LIMIT_MESSAGE = re.compile(r"limit|quota|exceed", re.IGNORECASE)
+_RATE_LIMIT_MESSAGE = re.compile(
+    r"rate.?limit|quota|too many requests|limit (?:exceeded|reached)|exceeded", re.IGNORECASE
+)
 
 
 class LegiScanRateLimitError(Exception):
@@ -29,27 +31,29 @@ class LegiScanClient:
     MAX_RETRIES = 3
     MIN_REQUEST_INTERVAL = 0.6
     USER_AGENT = "cntr-aisle-ingestion/1.0 (+https://github.com/brown-cntr/cntr-aisle-services)"
+    MAX_QUERY_BYTES = 1024
 
-    AI_SEARCH_QUERY = (
-        "(digital NEAR replica) OR (computer-generated) OR (digital NEAR forger) OR "
-        "(artificial NEAR intelligence) OR (automated NEAR decision NEAR making) OR "
-        "(automatic NEAR decision NEAR making) OR (decision NEAR making NEAR tool) OR "
-        "(automated NEAR decision NEAR tool) OR (automatic NEAR decision NEAR tool) OR "
-        "(automated NEAR decision NEAR system) OR (automatic NEAR decision NEAR system) OR "
-        "(automated NEAR final NEAR decision) OR (automatic NEAR final NEAR decision) OR "
-        "(face NEAR recog) OR (facial NEAR recog) OR (voice NEAR recog) OR "
-        "(iris NEAR recog) OR (gait NEAR recog) OR (genAI) OR (gen-AI) OR "
-        "(generative NEAR AI) OR (generative NEAR tech) OR (generative NEAR model) OR "
-        "(generative NEAR artificial) OR (machine NEAR learning) OR (deep NEAR learning) OR "
-        "(chat NEAR bot) OR (virtual NEAR assistant) OR (ChatGPT) OR (Chat-GPT) OR "
-        "(language NEAR model) OR (AI NEAR task NEAR force) OR (AI NEAR advis) OR "
-        "(AI NEAR audit) OR (AI NEAR generate) OR (AI NEAR snoop) OR (deep NEAR fake) OR "
-        "(synthetic NEAR media) OR (digital NEAR assistant) OR (natural NEAR language NEAR process) OR "
-        "(computer NEAR vision) OR (frontier NEAR model) OR (software NEAR agent) OR "
-        "(embodied NEAR robot) OR (foundation NEAR model) OR (LLM) OR (LLMs) OR "
-        "(Information NEAR Technology NEAR Act)"
-    )
-    
+    AI_SEARCH_TERMS = [
+        "digital NEAR replica", "computer-generated", "digital NEAR forger",
+        "artificial NEAR intelligence",
+        # Covers the former "... NEAR decision NEAR making/tool/system" and
+        # "... NEAR final NEAR decision" variants, which pushed the query past 1024 bytes
+        "automated NEAR decision", "automatic NEAR decision",
+        "decision NEAR making NEAR tool",
+        "face NEAR recog", "facial NEAR recog", "voice NEAR recog",
+        "iris NEAR recog", "gait NEAR recog", "genAI", "gen-AI",
+        "generative NEAR AI", "generative NEAR tech", "generative NEAR model",
+        "generative NEAR artificial", "machine NEAR learning", "deep NEAR learning",
+        "chat NEAR bot", "virtual NEAR assistant", "ChatGPT", "Chat-GPT",
+        "language NEAR model", "AI NEAR task NEAR force", "AI NEAR advis",
+        "AI NEAR audit", "AI NEAR generate", "AI NEAR snoop", "deep NEAR fake",
+        "synthetic NEAR media", "digital NEAR assistant", "natural NEAR language NEAR process",
+        "computer NEAR vision", "frontier NEAR model", "software NEAR agent",
+        "embodied NEAR robot", "foundation NEAR model", "LLM", "LLMs",
+        "Information NEAR Technology NEAR Act",
+    ]
+    AI_SEARCH_QUERY = " OR ".join(f"({term})" for term in AI_SEARCH_TERMS)
+
     def __init__(self, api_key: Optional[str] = None):
         """Initialize LegiScan client"""
         settings = get_settings()
@@ -148,16 +152,14 @@ class LegiScanClient:
             Tuple of (filtered_results, summary)
         """
         operation = "getSearchRaw" if use_raw else "getSearch"
-        
         params = {
             "query": self.AI_SEARCH_QUERY,
             "state": state
         }
-        
+
         logger.info(f"Searching LegiScan API with {operation}...")
         logger.debug(f"Query: {self.AI_SEARCH_QUERY[:100]}...")
-        
-        # getSearchRaw returns at most 2000 results per page; fetch every page
+
         results: List[Dict] = []
         seen_bill_ids: Set[Any] = set()
         page = 1
@@ -177,7 +179,7 @@ class LegiScanClient:
 
         logger.info(f"Found {summary.get('count', 0)} total results across {page} page(s)")
         logger.debug(f"Relevance range: {summary.get('relevancy', 'N/A')}")
-        
+
         # Filter by minimum relevance score
         filtered_results = [
             bill for bill in results 
