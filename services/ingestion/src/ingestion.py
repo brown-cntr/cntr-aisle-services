@@ -10,7 +10,7 @@ from shared.models.bill import Bill
 
 from .bills_repository import BillsRepository
 from .filtering import filter_bills_for_processing
-from .legiscan_client import LegiScanClient
+from .legiscan_client import LegiScanClient, LegiScanRateLimitError
 
 logger = logging.getLogger(__name__)
 
@@ -150,10 +150,20 @@ class IngestionService:
 
             # Step 3: Fetch full metadata for each bill
             logger.info("Step 3: Fetching detailed bill metadata...")
-            bills = self.legiscan_client.get_bills_from_search_results(
-                search_results,
-                existing_legiscan_ids=existing_legiscan_ids,
-            )
+            try:
+                bills = self.legiscan_client.get_bills_from_search_results(
+                    search_results,
+                    existing_legiscan_ids=existing_legiscan_ids,
+                )
+            except LegiScanRateLimitError as e:
+                # Store what was fetched so the queries already spent aren't wasted
+                if e.partial_bills and not dry_run:
+                    stored = self.bills_repository.store_bills(e.partial_bills)
+                    logger.warning(
+                        f"LegiScan rate limit/quota hit after fetching {len(e.partial_bills)} bills; "
+                        f"stored {stored} before stopping"
+                    )
+                raise
 
             if not bills:
                 logger.warning("No bills successfully fetched")
@@ -240,6 +250,8 @@ class IngestionService:
                 else:
                     self.bills_repository.update_bill_by_legiscan_id(bill_id, bill)
                 updated += 1
+            except LegiScanRateLimitError:
+                raise
             except Exception as e:
                 logger.error(f"Error backfilling bill {bill_id}: {e}", exc_info=True)
                 continue
@@ -313,12 +325,16 @@ class IngestionService:
 
                         total_updated += 1
 
+                    except LegiScanRateLimitError:
+                        raise
                     except Exception as e:
                         logger.error(
                             f"Error syncing bill {bill_id}: {e}", exc_info=True
                         )
                         continue
 
+            except LegiScanRateLimitError:
+                raise
             except Exception as e:
                 logger.error(
                     f"Error syncing session {session_id}: {e}", exc_info=True

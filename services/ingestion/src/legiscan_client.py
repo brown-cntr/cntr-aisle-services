@@ -14,32 +14,46 @@ from .parser import parse_bill_data
 
 logger = logging.getLogger(__name__)
 
+_RATE_LIMIT_MESSAGE = re.compile(
+    r"rate.?limit|quota|too many requests|limit (?:exceeded|reached)|exceeded", re.IGNORECASE
+)
+
+
+class LegiScanRateLimitError(Exception):
+    """Rate limit or monthly query quota exceeded."""
+
+    partial_bills: List[Bill] = []
+
 
 class LegiScanClient:
     """Client for interacting with LegiScan API"""
-    
+
     MAX_RETRIES = 3
-    
-    AI_SEARCH_QUERY = (
-        "(digital NEAR replica) OR (computer-generated) OR (digital NEAR forger) OR "
-        "(artificial NEAR intelligence) OR (automated NEAR decision NEAR making) OR "
-        "(automatic NEAR decision NEAR making) OR (decision NEAR making NEAR tool) OR "
-        "(automated NEAR decision NEAR tool) OR (automatic NEAR decision NEAR tool) OR "
-        "(automated NEAR decision NEAR system) OR (automatic NEAR decision NEAR system) OR "
-        "(automated NEAR final NEAR decision) OR (automatic NEAR final NEAR decision) OR "
-        "(face NEAR recog) OR (facial NEAR recog) OR (voice NEAR recog) OR "
-        "(iris NEAR recog) OR (gait NEAR recog) OR (genAI) OR (gen-AI) OR "
-        "(generative NEAR AI) OR (generative NEAR tech) OR (generative NEAR model) OR "
-        "(generative NEAR artificial) OR (machine NEAR learning) OR (deep NEAR learning) OR "
-        "(chat NEAR bot) OR (virtual NEAR assistant) OR (ChatGPT) OR (Chat-GPT) OR "
-        "(language NEAR model) OR (AI NEAR task NEAR force) OR (AI NEAR advis) OR "
-        "(AI NEAR audit) OR (AI NEAR generate) OR (AI NEAR snoop) OR (deep NEAR fake) OR "
-        "(synthetic NEAR media) OR (digital NEAR assistant) OR (natural NEAR language NEAR process) OR "
-        "(computer NEAR vision) OR (frontier NEAR model) OR (software NEAR agent) OR "
-        "(embodied NEAR robot) OR (foundation NEAR model) OR (LLM) OR (LLMs) OR "
-        "(Information NEAR Technology NEAR Act)"
-    )
-    
+    MIN_REQUEST_INTERVAL = 0.6
+    USER_AGENT = "cntr-aisle-ingestion/1.0 (+https://github.com/brown-cntr/cntr-aisle-services)"
+    MAX_QUERY_BYTES = 1024
+
+    AI_SEARCH_TERMS = [
+        "digital NEAR replica", "computer-generated", "digital NEAR forger",
+        "artificial NEAR intelligence",
+        # Covers the former "... NEAR decision NEAR making/tool/system" and
+        # "... NEAR final NEAR decision" variants, which pushed the query past 1024 bytes
+        "automated NEAR decision", "automatic NEAR decision",
+        "decision NEAR making NEAR tool",
+        "face NEAR recog", "facial NEAR recog", "voice NEAR recog",
+        "iris NEAR recog", "gait NEAR recog", "genAI", "gen-AI",
+        "generative NEAR AI", "generative NEAR tech", "generative NEAR model",
+        "generative NEAR artificial", "machine NEAR learning", "deep NEAR learning",
+        "chat NEAR bot", "virtual NEAR assistant", "ChatGPT", "Chat-GPT",
+        "language NEAR model", "AI NEAR task NEAR force", "AI NEAR advis",
+        "AI NEAR audit", "AI NEAR generate", "AI NEAR snoop", "deep NEAR fake",
+        "synthetic NEAR media", "digital NEAR assistant", "natural NEAR language NEAR process",
+        "computer NEAR vision", "frontier NEAR model", "software NEAR agent",
+        "embodied NEAR robot", "foundation NEAR model", "LLM", "LLMs",
+        "Information NEAR Technology NEAR Act",
+    ]
+    AI_SEARCH_QUERY = " OR ".join(f"({term})" for term in AI_SEARCH_TERMS)
+
     def __init__(self, api_key: Optional[str] = None):
         """Initialize LegiScan client"""
         settings = get_settings()
@@ -53,7 +67,7 @@ class LegiScanClient:
         self.base_url = "https://api.legiscan.com"
         self.request_count = 0
         self.last_request_time = 0
-        self.min_request_interval = 0.1  # 100ms between requests to avoid rate limiting
+        self.min_request_interval = self.MIN_REQUEST_INTERVAL
     
     def _make_request(self, operation: str, _retries: int = 0, **params) -> Dict[str, Any]:
         """
@@ -84,37 +98,41 @@ class LegiScanClient:
         
         try:
             logger.debug(f"Making API request: {operation} with params: {params}")
-            response = urllib.request.urlopen(full_url, timeout=30)
-            data = json.loads(response.read())
-            
             self.request_count += 1
-            self.last_request_time = time.time()
-            
+            request = urllib.request.Request(full_url, headers={"User-Agent": self.USER_AGENT})
+            response = urllib.request.urlopen(request, timeout=30)
+            data = json.loads(response.read())
+
             # Check for API errors
             if data.get("status") != "OK":
                 error_msg = data.get("alert", {}).get("message", "Unknown error")
                 logger.error(f"LegiScan API error: {error_msg}")
+                if _RATE_LIMIT_MESSAGE.search(error_msg):
+                    raise LegiScanRateLimitError(f"LegiScan API error: {error_msg}")
                 raise Exception(f"LegiScan API error: {error_msg}")
-            
+
             return data
-            
+
         except urllib.error.HTTPError as e:
             if e.code == 429:
                 if _retries >= self.MAX_RETRIES:
-                    raise Exception("Rate limit exceeded after max retries")
+                    raise LegiScanRateLimitError("Rate limit exceeded after max retries")
                 wait = 60 * (2 ** _retries)
                 logger.warning(f"Rate limit hit, waiting {wait}s (retry {_retries + 1}/{self.MAX_RETRIES})...")
                 time.sleep(wait)
                 return self._make_request(operation, _retries=_retries + 1, **params)
-            logger.error(f"HTTP Error {e.code}: {e.reason}")
-            raise Exception(f"HTTP Error {e.code}: {e.reason}")
+            body = e.read(200).decode(errors="replace").strip() if e.fp else ""
+            logger.error(f"HTTP Error {e.code}: {e.reason} {body}")
+            raise Exception(f"HTTP Error {e.code}: {e.reason} {body}")
         except json.JSONDecodeError as e:
             logger.error(f"JSON decode error: {e}")
             raise Exception(f"JSON decode error: {e}")
         except Exception as e:
             logger.error(f"Request failed: {e}")
             raise
-    
+        finally:
+            self.last_request_time = time.time()
+
     def search_ai_bills(
         self, 
         min_relevance: int = 0, 
@@ -134,25 +152,34 @@ class LegiScanClient:
             Tuple of (filtered_results, summary)
         """
         operation = "getSearchRaw" if use_raw else "getSearch"
-        
         params = {
             "query": self.AI_SEARCH_QUERY,
             "state": state
         }
-        
+
         logger.info(f"Searching LegiScan API with {operation}...")
         logger.debug(f"Query: {self.AI_SEARCH_QUERY[:100]}...")
-        
-        data = self._make_request(operation, **params)
-        
-        # Extract results from response
-        search_result = data.get("searchresult", {})
-        results = search_result.get("results", [])
-        summary = search_result.get("summary", {})
-        
-        logger.info(f"Found {summary.get('count', 0)} total results")
+
+        results: List[Dict] = []
+        seen_bill_ids: Set[Any] = set()
+        page = 1
+        while True:
+            data = self._make_request(operation, page=page, **params)
+            search_result = data.get("searchresult", {})
+            summary = search_result.get("summary", {})
+            for bill in search_result.get("results", []):
+                if bill.get("bill_id") in seen_bill_ids:
+                    continue
+                seen_bill_ids.add(bill.get("bill_id"))
+                results.append(bill)
+            page_total = int(summary.get("page_total") or 1)
+            if page >= page_total:
+                break
+            page += 1
+
+        logger.info(f"Found {summary.get('count', 0)} total results across {page} page(s)")
         logger.debug(f"Relevance range: {summary.get('relevancy', 'N/A')}")
-        
+
         # Filter by minimum relevance score
         filtered_results = [
             bill for bill in results 
@@ -252,7 +279,10 @@ class LegiScanClient:
                 # Parse into Bill model
                 bill = parse_bill_data(bill_data)
                 bills.append(bill)
-                
+
+            except LegiScanRateLimitError as e:
+                e.partial_bills = bills
+                raise
             except Exception as e:
                 logger.error(f"Error fetching bill {bill_id}: {e}")
                 continue

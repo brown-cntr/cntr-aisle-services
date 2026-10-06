@@ -18,7 +18,7 @@ The ingestion service:
   - `get_bill()`: Fetch detailed bill metadata
   - `get_bill_text()`: Fetch bill text documents
   - `parse_bill_data()`: Convert LegiScan format to Bill model (delegates to `parser.py`)
-  - Built-in rate limiting (100ms between requests)
+  - Built-in rate limiting (0.6s between requests)
   - Automatic retry on 429 rate limit errors
 
 ### `parser.py`
@@ -148,12 +148,17 @@ SUPABASE_KEY=your_supabase_key
 
 ## Rate Limits
 
-- **LegiScan API Free Tier**: 20,000 queries/month
+From October 1, 2026, the LegiScan public API allows:
+- **10,000 queries/month** (every request counts, including failed and cached ones)
+- **~2 requests/second** sustained, enforced with a sliding window
 
 The client includes:
-- 100ms delay between requests
-- Automatic retry on 429 errors (waits 60 seconds)
-- Request counting for monitoring
+- 0.6s minimum spacing between requests
+- Automatic retry on 429 errors (waits 60s, then 120s, then 240s)
+- `LegiScanRateLimitError` when the rate limit or quota is hit; this stops the run instead of silently skipping bills (bills fetched before the limit are still stored)
+- Request counting; the CLI logs `LegiScan queries used this run: N` at the end of every ingest, sync, and backfill run
+
+Avoid `--full` and `--check-existing` unless needed: each calls `getBill` for every search result (~2,000 queries).
 
 ## Data Mapping
 
