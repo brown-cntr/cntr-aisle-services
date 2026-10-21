@@ -1,6 +1,7 @@
 # Core dependencies
 pydantic>=2.0.0
 pydantic-settings>=2.0.0
+PyYAML>=6.0  # versioned AI-search query config (services/ingestion/config)
 
 # Database
 supabase>=2.0.0

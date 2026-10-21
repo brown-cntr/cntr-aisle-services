@@ -1,16 +1,20 @@
-import re
-import urllib.request
-import urllib.parse
 import json
-import time
 import logging
-from typing import Dict, List, Optional, Any, Set
-from datetime import datetime, date
+import re
+import time
+import urllib.parse
+import urllib.request
+from typing import Any, Dict, List, Optional, Set
 
-from shared.utils.config import get_settings
 from shared.models.bill import Bill
+from shared.utils.config import get_settings
 
 from .parser import parse_bill_data
+from .query_config import get_ai_search_query
+from .text_extraction import (
+    extract_text_from_api_payload,
+    select_latest_text_entry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,26 +37,10 @@ class LegiScanClient:
     USER_AGENT = "cntr-aisle-ingestion/1.0 (+https://github.com/brown-cntr/cntr-aisle-services)"
     MAX_QUERY_BYTES = 1024
 
-    AI_SEARCH_TERMS = [
-        "digital NEAR replica", "computer-generated", "digital NEAR forger",
-        "artificial NEAR intelligence",
-        # Covers the former "... NEAR decision NEAR making/tool/system" and
-        # "... NEAR final NEAR decision" variants, which pushed the query past 1024 bytes
-        "automated NEAR decision", "automatic NEAR decision",
-        "decision NEAR making NEAR tool",
-        "face NEAR recog", "facial NEAR recog", "voice NEAR recog",
-        "iris NEAR recog", "gait NEAR recog", "genAI", "gen-AI",
-        "generative NEAR AI", "generative NEAR tech", "generative NEAR model",
-        "generative NEAR artificial", "machine NEAR learning", "deep NEAR learning",
-        "chat NEAR bot", "virtual NEAR assistant", "ChatGPT", "Chat-GPT",
-        "language NEAR model", "AI NEAR task NEAR force", "AI NEAR advis",
-        "AI NEAR audit", "AI NEAR generate", "AI NEAR snoop", "deep NEAR fake",
-        "synthetic NEAR media", "digital NEAR assistant", "natural NEAR language NEAR process",
-        "computer NEAR vision", "frontier NEAR model", "software NEAR agent",
-        "embodied NEAR robot", "foundation NEAR model", "LLM", "LLMs",
-        "Information NEAR Technology NEAR Act",
-    ]
-    AI_SEARCH_QUERY = " OR ".join(f"({term})" for term in AI_SEARCH_TERMS)
+    # Assembled from services/ingestion/config/ai_search_query.yaml at import time
+    # (falls back to a built-in default if the config is missing/unreadable). Edit
+    # the YAML to tune coverage; do not hardcode the query here.
+    AI_SEARCH_QUERY = get_ai_search_query()
 
     def __init__(self, api_key: Optional[str] = None):
         """Initialize LegiScan client"""
@@ -228,10 +216,51 @@ class LegiScanClient:
         data = self._make_request("getBillText", id=text_id)
         return data.get("text", {})
     
+    def fetch_bill_full_text(self, bill_data: Dict[str, Any]) -> Optional[str]:
+        """
+        Fetch and extract the latest full text for a bill.
+
+        Selects the most recent entry from the bill's ``texts`` list, fetches that
+        document via getBillText (one extra API call), and decodes it by MIME type
+        into plain text. Returns ``None`` when the bill has no usable text document
+        or the document cannot be decoded; never raises for a single bad document.
+
+        Args:
+            bill_data: Raw LegiScan getBill payload (must include a ``texts`` list)
+
+        Returns:
+            Extracted document text, or ``None`` if unavailable.
+        """
+        texts = bill_data.get("texts") or []
+        latest = select_latest_text_entry(texts)
+        if not latest:
+            logger.debug("No text documents on bill; skipping full-text fetch")
+            return None
+
+        doc_id = latest.get("doc_id")
+        if doc_id is None:
+            logger.debug("Latest text entry has no doc_id; skipping full-text fetch")
+            return None
+
+        try:
+            text_payload = self.get_bill_text(int(doc_id))
+            if not text_payload:
+                return None
+            state = (bill_data.get("state") or "").upper()
+            _mime_id, text, _state_link = extract_text_from_api_payload(
+                {"text": text_payload}, state=state
+            )
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Could not extract full text for doc {doc_id}: {e}")
+            return None
+
+        return text or None
+
     def get_bills_from_search_results(
         self,
         search_results: List[Dict[str, Any]],
         existing_legiscan_ids: Optional[Set[int]] = None,
+        include_text: bool = False,
     ) -> List[Bill]:
         """
         Fetch full bill metadata for each search result and parse into Bill models.
@@ -240,6 +269,8 @@ class LegiScanClient:
         Args:
             search_results: List of search result dictionaries from search_ai_bills
             existing_legiscan_ids: If set, skip getBill for these LegiScan bill IDs
+            include_text: If True, also fetch and populate ``Bill.full_text`` for
+                each bill (one extra getBillText API call per bill)
 
         Returns:
             List of Bill model instances
@@ -278,6 +309,11 @@ class LegiScanClient:
                 
                 # Parse into Bill model
                 bill = parse_bill_data(bill_data)
+
+                # Optionally fetch + attach the latest full text (extra API call)
+                if include_text:
+                    bill.full_text = self.fetch_bill_full_text(bill_data)
+
                 bills.append(bill)
 
             except LegiScanRateLimitError as e:

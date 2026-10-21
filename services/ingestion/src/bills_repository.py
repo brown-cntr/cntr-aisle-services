@@ -166,9 +166,16 @@ class BillsRepository:
 
     @staticmethod
     def _bill_to_row(bill: Bill) -> dict:
-        """Build a database row dict from a Bill model (exclude id, timestamps, full_text)."""
+        """Build a database row dict from a Bill model (exclude id and timestamps).
+
+        ``exclude_none=True`` drops unset optional fields, so ``full_text`` and
+        ``source`` only appear in the row when populated: default LegiScan-only
+        ingestion (no ``--full-text``) writes neither and is unaffected. When they
+        are set, the ``bills`` table must have matching ``full_text`` (text) and
+        ``source`` (text) columns.
+        """
         row = bill.model_dump(
-            exclude={"id", "created_at", "updated_at", "full_text"},
+            exclude={"id", "created_at", "updated_at"},
             exclude_none=True,
         )
         if not row.get("url") and bill.legiscan_url:
