@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 from unittest.mock import Mock, patch
 
-from services.ingestion.src.bills_repository import BillsRepository
+from services.ingestion.src.bills_repository import BillsRepository, DatabaseReadError
 from shared.models.bill import Bill, BillBody
 
 
@@ -121,3 +121,25 @@ class TestBillsRepository:
         mock_supabase.execute.return_value.data = []
         result = repository.get_last_run_timestamp()
         assert result is None
+
+
+class TestBillsRepositoryReadErrors:
+    """Read failures must raise, not look like an empty table"""
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda r: r.get_last_run_timestamp(),
+            lambda r: r.get_existing_bills_by_state_number(),
+            lambda r: r.get_existing_legiscan_ids_in_list([111, 222]),
+            lambda r: r.get_distinct_session_ids(),
+            lambda r: r.get_change_hashes_for_session(1),
+        ],
+    )
+    def test_read_error_raises(self, repository, mock_supabase, call):
+        mock_supabase.range.return_value = mock_supabase
+        mock_supabase.gt.return_value = mock_supabase
+        mock_supabase.not_.is_.return_value = mock_supabase
+        mock_supabase.execute.side_effect = Exception("401 Unregistered API key")
+        with pytest.raises(DatabaseReadError):
+            call(repository)

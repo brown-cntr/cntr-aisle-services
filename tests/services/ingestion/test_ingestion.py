@@ -6,7 +6,8 @@ from uuid import uuid4
 import pytest
 from unittest.mock import Mock, patch
 
-from services.ingestion.src.ingestion import IngestionService
+from services.ingestion.src.bills_repository import DatabaseReadError
+from services.ingestion.src.ingestion import EmptyDatabaseError, IngestionService
 from services.ingestion.src.legiscan_client import LegiScanRateLimitError
 from shared.models.bill import Bill, BillBody
 
@@ -83,7 +84,7 @@ class TestIngestionService:
             Bill(external_id="111", title="Bill 111", state="CA", year=2024, bill_number="AB111", body=BillBody.ASSEMBLY),
         ]
         mock_supabase.execute.side_effect = [
-            Mock(data=[]),
+            Mock(data=[{"state": "CA", "bill_number": "AB999", "external_id": "999", "version_date": None}]),
             Mock(data=[]),
             Mock(data=[{"legiscan_id": 222}]),
             Mock(data=[]),
@@ -156,3 +157,49 @@ class TestSyncRateLimit:
         assert svc.sync_bills() == 0
         # Two changed bills in each of the two sessions, all attempted
         assert legiscan.get_bill.call_count == 4
+
+
+class TestFailFastBeforeLegiScan:
+    """Database problems must stop the run before any LegiScan query is spent."""
+
+    def test_ingest_incremental_empty_database_raises(self):
+        legiscan = Mock()
+        repo = Mock()
+        repo.get_existing_bills_by_state_number.return_value = {}
+        repo.get_last_run_timestamp.return_value = None
+        svc = IngestionService(legiscan_client=legiscan, bills_repository=repo)
+
+        with pytest.raises(EmptyDatabaseError):
+            svc.ingest_ai_bills(incremental=True)
+        legiscan.search_ai_bills.assert_not_called()
+
+    def test_ingest_database_read_error_raises(self):
+        legiscan = Mock()
+        repo = Mock()
+        repo.get_existing_bills_by_state_number.side_effect = DatabaseReadError("401")
+        svc = IngestionService(legiscan_client=legiscan, bills_repository=repo)
+
+        with pytest.raises(DatabaseReadError):
+            svc.ingest_ai_bills(incremental=True)
+        legiscan.search_ai_bills.assert_not_called()
+
+    def test_sync_empty_database_raises(self):
+        legiscan = Mock()
+        repo = Mock()
+        repo.get_distinct_session_ids.return_value = []
+        svc = IngestionService(legiscan_client=legiscan, bills_repository=repo)
+
+        with pytest.raises(EmptyDatabaseError):
+            svc.sync_bills()
+        legiscan.get_master_list_raw.assert_not_called()
+
+    def test_sync_database_read_error_stops_before_master_list(self):
+        legiscan = Mock()
+        repo = Mock()
+        repo.get_distinct_session_ids.return_value = [1, 2]
+        repo.get_change_hashes_for_session.side_effect = DatabaseReadError("401")
+        svc = IngestionService(legiscan_client=legiscan, bills_repository=repo)
+
+        with pytest.raises(DatabaseReadError):
+            svc.sync_bills()
+        legiscan.get_master_list_raw.assert_not_called()

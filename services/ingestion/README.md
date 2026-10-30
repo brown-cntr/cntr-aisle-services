@@ -5,6 +5,7 @@ Automated service for ingesting AI-related bills from LegiScan into Supabase.
 ## Overview
 
 The ingestion service:
+
 1. Searches LegiScan API for AI-related bills using a comprehensive keyword query
 2. Fetches detailed metadata for each matching bill
 3. Parses and transforms data to match database schema
@@ -13,6 +14,7 @@ The ingestion service:
 ## Components
 
 ### `legiscan_client.py`
+
 - **LegiScanClient**: Main client for LegiScan API interactions
   - `search_ai_bills()`: Search for AI-related bills
   - `get_bill()`: Fetch detailed bill metadata
@@ -22,9 +24,11 @@ The ingestion service:
   - Automatic retry on 429 rate limit errors
 
 ### `parser.py`
+
 - **parse_bill_data()**: Converts raw LegiScan bill dict to our `Bill` model (external_id, body mapping, version_date, etc.)
 
 ### `ingestion.py`
+
 - **IngestionService**: Orchestrates the full ingestion workflow
   - `ingest_ai_bills()`: Main entry point for ingestion
   - `_store_bills()`: Handles Supabase storage (insert/update)
@@ -69,7 +73,7 @@ Exit code: 0 on success (prints ingested count to stdout), 1 on failure.
 
 When `--legiscan-url` is provided, the CLI will:
 
-- Use the numeric `bill_id` directly if the URL is of the form `.../STATE/bill/123456`  
+- Use the numeric `bill_id` directly if the URL is of the form `.../STATE/bill/123456`
 - Otherwise (e.g. `.../IL/bill/SB3890/2025`), resolve `bill_id` using the LegiScan search API based on the state, bill number, and year encoded in the URL, and then ingest that specific bill.
 
 ### Dry Run
@@ -85,20 +89,23 @@ python services/ingestion/src/ingestion.py --dry-run
 By default, the service runs in **incremental mode**, optimized for daily cron jobs:
 
 **Best Practice for Daily Cron Jobs:**
+
 1. **Search** (1 API call): Searches for all AI-related bills - necessary because LegiScan doesn't support date filtering
 2. **Filter** (in-memory): Filters search results by what we already have (by state + bill_number). Only bills that might be new or have new versions are processed
 3. **Fetch** (N API calls): Only fetches detailed data for bills that passed the filter
 4. **Store**: Inserts new bills into database
 
 **Why This Approach:**
+
 - **Most Efficient**: Only fetches bills we haven't seen before
-- **API Quota Friendly**: 
+- **API Quota Friendly**:
   - First run: ~2000 API calls (search + fetch all)
   - Daily runs: ~1 search + ~5-50 fetch calls (only new bills)
 - **Fast**: Daily runs complete in seconds/minutes instead of hours
 
 **Optional: Check Existing Bills**
 If you want to also check existing bills for updates (slower but catches all changes):
+
 ```bash
 python services/ingestion/src/ingestion.py --check-existing
 ```
@@ -140,6 +147,7 @@ bill = client.parse_bill_data(bill_data)
 ## Environment Variables
 
 Required in `.env`:
+
 ```bash
 LEGISCAN_API_KEY=your_api_key_here
 SUPABASE_URL=your_supabase_url
@@ -149,10 +157,12 @@ SUPABASE_KEY=your_supabase_key
 ## Rate Limits
 
 From October 1, 2026, the LegiScan public API allows:
+
 - **10,000 queries/month** (every request counts, including failed and cached ones)
 - **~2 requests/second** sustained, enforced with a sliding window
 
 The client includes:
+
 - 0.6s minimum spacing between requests
 - Automatic retry on 429 errors (waits 60s, then 120s, then 240s)
 - `LegiScanRateLimitError` when the rate limit or quota is hit; this stops the run instead of silently skipping bills (bills fetched before the limit are still stored)
@@ -163,6 +173,7 @@ Avoid `--full` and `--check-existing` unless needed: each calls `getBill` for ev
 ## Data Mapping
 
 LegiScan → Supabase Schema:
+
 - `external_id`: Composite `"STATE BILL_NUMBER VERSION_DATE"` (e.g. `CA SB53 2025-01-07`), built from LegiScan `state`, `bill_number`, and `status_date` (or first history date)
 - `title` → `title`
 - `state` → `state`
@@ -175,4 +186,5 @@ LegiScan → Supabase Schema:
 - `bill_id` → `legiscan_id`
 
 ## Credit
+
 Much of the filtering query and LegiScan API knowledge provided by [Timothy Fong](https://github.com/Timfon)
