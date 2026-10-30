@@ -8,11 +8,15 @@ from typing import List, Optional
 from shared.database.supabase_client import get_supabase_client
 from shared.models.bill import Bill
 
-from .bills_repository import BillsRepository
+from .bills_repository import BillsRepository, DatabaseReadError
 from .filtering import filter_bills_for_processing
 from .legiscan_client import LegiScanClient, LegiScanRateLimitError
 
 logger = logging.getLogger(__name__)
+
+
+class EmptyDatabaseError(Exception):
+    """Incremental run found no bills"""
 
 
 class IngestionService:
@@ -82,8 +86,9 @@ class IngestionService:
                     f"({total_existing} total bills) in database"
                 )
             else:
-                logger.info(
-                    "Incremental mode: No existing bills found, will process all search results"
+                raise EmptyDatabaseError(
+                    "Incremental mode found no bills in the database. "
+                    "Check SUPABASE_URL/SUPABASE_KEY, or run with --full for an initial load."
                 )
 
         try:
@@ -275,8 +280,9 @@ class IngestionService:
 
         session_ids = self.bills_repository.get_distinct_session_ids()
         if not session_ids:
-            logger.warning("No sessions found in database; nothing to sync")
-            return 0
+            raise EmptyDatabaseError(
+                "No sessions found in database; check SUPABASE_URL/SUPABASE_KEY"
+            )
 
         logger.info(f"Checking {len(session_ids)} session(s) for changes")
 
@@ -284,10 +290,10 @@ class IngestionService:
 
         for session_id in session_ids:
             try:
-                api_hashes = self.legiscan_client.get_master_list_raw(session_id)
                 db_hashes = self.bills_repository.get_change_hashes_for_session(
                     session_id
                 )
+                api_hashes = self.legiscan_client.get_master_list_raw(session_id)
 
                 # Only consider bill_ids we already track in the DB
                 changed_ids = [
@@ -333,7 +339,7 @@ class IngestionService:
                         )
                         continue
 
-            except LegiScanRateLimitError:
+            except (LegiScanRateLimitError, DatabaseReadError):
                 raise
             except Exception as e:
                 logger.error(

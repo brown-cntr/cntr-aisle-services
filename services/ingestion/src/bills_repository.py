@@ -10,6 +10,10 @@ from shared.models.bill import Bill
 logger = logging.getLogger(__name__)
 
 
+class DatabaseReadError(Exception):
+    """A read the ingestion logic depends on failed (e.g. bad credentials)."""
+
+
 class BillsRepository:
     """Single place for all bills-table Supabase access."""
 
@@ -47,10 +51,7 @@ class BillsRepository:
             return None
 
         except Exception as e:
-            logger.warning(
-                f"Error getting last run timestamp: {e}, will process all bills"
-            )
-            return None
+            raise DatabaseReadError(f"Error getting last run timestamp: {e}") from e
 
     def get_existing_legiscan_ids_in_list(self, bill_ids: List[int]) -> set[int]:
         """
@@ -80,9 +81,9 @@ class BillsRepository:
                     if row.get("legiscan_id") is not None:
                         existing.add(int(row["legiscan_id"]))
             except Exception as e:
-                logger.warning(
+                raise DatabaseReadError(
                     f"Error bulk-checking legiscan_ids for chunk: {e}"
-                )
+                ) from e
         logger.info(
             f"Bulk check: {len(existing)} of {len(bill_ids)} search-result bills already in database"
         )
@@ -159,10 +160,9 @@ class BillsRepository:
             )
             return bills_by_key
         except Exception as e:
-            logger.warning(
+            raise DatabaseReadError(
                 f"Error getting existing bills by state+number: {e}"
-            )
-            return {}
+            ) from e
 
     @staticmethod
     def _bill_to_row(bill: Bill) -> dict:
@@ -235,8 +235,7 @@ class BillsRepository:
             logger.info(f"Found {len(ids)} distinct session IDs in database")
             return list(ids)
         except Exception as e:
-            logger.warning(f"Error fetching distinct session IDs: {e}")
-            return []
+            raise DatabaseReadError(f"Error fetching distinct session IDs: {e}") from e
 
     def get_change_hashes_for_session(self, session_id: int) -> dict[int, str]:
         """Return {legiscan_id: change_hash} for all bills in the given session.
@@ -266,10 +265,9 @@ class BillsRepository:
                 offset += page_size
             return hashes
         except Exception as e:
-            logger.warning(
+            raise DatabaseReadError(
                 f"Error fetching change hashes for session {session_id}: {e}"
-            )
-            return {}
+            ) from e
 
     def update_bill_by_legiscan_id(self, legiscan_id: int, bill: Bill) -> bool:
         """Full update of a bill row matched by legiscan_id."""
